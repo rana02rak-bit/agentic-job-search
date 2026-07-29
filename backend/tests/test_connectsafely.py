@@ -58,23 +58,28 @@ def test_account_status_rejects_expired_linkedin_tokens(monkeypatch) -> None:
 
 
 def test_people_search_maps_linkedin_results(monkeypatch) -> None:
+    captured: dict = {}
+
+    def fake_request(*_args, **kwargs) -> httpx.Response:
+        captured["body"] = kwargs["json"]
+        return response(
+            {
+                "success": True,
+                "people": [
+                    {
+                        "firstName": "Asha",
+                        "lastName": "Rao",
+                        "publicIdentifier": "asha-rao",
+                        "headline": "Talent Partner at Acme",
+                        "mutualConnectionsCount": 2,
+                    }
+                ],
+            }
+        )
+
     monkeypatch.setattr(
         "app.services.connectsafely.httpx.request",
-        lambda *_args, **_kwargs: response(
-            {
-                "data": {
-                    "elements": [
-                        {
-                            "firstName": "Asha",
-                            "lastName": "Rao",
-                            "publicIdentifier": "asha-rao",
-                            "headline": "Talent Partner at Acme",
-                            "mutualConnectionsCount": 2,
-                        }
-                    ]
-                }
-            }
-        ),
+        fake_request,
     )
     contacts = discover_contacts(
         Settings(connectsafely_api_key="test-key"),
@@ -86,6 +91,10 @@ def test_people_search_maps_linkedin_results(monkeypatch) -> None:
     assert contacts[0].name == "Asha Rao"
     assert contacts[0].linkedin_url == "https://www.linkedin.com/in/asha-rao"
     assert contacts[0].mutuals == 2
+    assert captured["body"]["keywords"] == ""
+    assert captured["body"]["filters"]["company"] == "Acme"
+    assert "Recruiter" in captured["body"]["filters"]["title"]
+    assert "locationId" not in captured["body"]["filters"]
 
 
 def test_send_uses_current_conversations_endpoint(monkeypatch) -> None:

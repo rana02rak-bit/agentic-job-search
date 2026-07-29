@@ -190,12 +190,23 @@ def get_account_status(settings: Settings) -> ConnectSafelyAccount:
 
 
 def _items(payload: dict[str, Any]) -> list[dict[str, Any]]:
-    candidates: list[Any] = [payload.get("items"), payload.get("results")]
+    candidates: list[Any] = [
+        payload.get("people"),
+        payload.get("items"),
+        payload.get("results"),
+    ]
     data = payload.get("data")
     if isinstance(data, list):
         candidates.append(data)
     elif isinstance(data, dict):
-        candidates.extend([data.get("items"), data.get("results"), data.get("elements")])
+        candidates.extend(
+            [
+                data.get("people"),
+                data.get("items"),
+                data.get("results"),
+                data.get("elements"),
+            ]
+        )
     candidates.append(payload.get("elements"))
     for candidate in candidates:
         if isinstance(candidate, list):
@@ -257,15 +268,13 @@ def discover_contacts(
         "\"Hiring Manager\" OR \"Head of Product\" OR \"VP Product\" OR "
         "\"Chief of Staff\" OR Founder"
     )
-    if job:
-        titles = f'"{job.title}" OR {titles}'
     body: dict[str, Any] = {
         "count": limit,
         "start": 0,
-        "keywords": titles,
+        "keywords": "",
         "filters": {
+            "title": titles,
             "company": company.name,
-            "locationId": "India",
         },
     }
     if settings.connectsafely_account_id:
