@@ -1,0 +1,18 @@
+[
+  {
+    "id": "lever-201",
+    "text": "Chief of Staff",
+    "categories": {
+      "location": "Mumbai, India",
+      "department": "Founder's Office"
+    },
+    "hostedUrl": "https://jobs.lever.co/acme/lever-201",
+    "createdAt": 1785229200000
+  },
+  {
+    "id": "lever-202",
+    "text": "Product Designer",
+    "categories": {"location": "Remote"},
+    "hostedUrl": "https://jobs.lever.co/acme/lever-202"
+  }
+]

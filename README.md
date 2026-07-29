@@ -1,16 +1,21 @@
 # RahulGPT — Agentic Job Search
 
-RahulGPT is a local-first job intelligence workspace. Sprint 1 provides a usable company
-watchlist, five-factor company scoring, AI-assisted company suggestions, job storage, and a
-dashboard. Manual watchlist features work without an OpenAI API key.
+RahulGPT is a local-first job intelligence workspace. The current build provides a usable company
+watchlist, five-factor company scoring, AI-assisted company suggestions, verified job ingestion
+from public ATS boards, and a dashboard. Manual watchlist and ATS discovery work without an OpenAI
+API key.
 
-## Sprint 1 features
+## Current features
 
 - Add, reprioritize, and remove target companies.
 - Keep user-added companies as a first-class watchlist.
 - Store companies, jobs, recruiters, and discovery runs in PostgreSQL.
 - Score companies across funding, hiring, AI relevance, location, and role match (50 points).
 - Generate structured AI suggestions using the OpenAI Responses API.
+- Connect watchlist companies to Greenhouse, Lever, or Ashby job boards.
+- Import only Rahul's target roles and locations, with external-ID and URL deduplication.
+- Keep discovery run history and isolate failures to the affected company source.
+- Run ATS discovery automatically each day at 08:00 Asia/Kolkata.
 - Show the current pipeline in a responsive Next.js dashboard.
 - Run the full stack locally with Docker Compose.
 
@@ -51,7 +56,22 @@ Never commit `.env` or paste API keys into chat. The previously shared `AIza...`
 Google API key, not an OpenAI API key, and should be revoked or restricted in Google Cloud.
 
 AI suggestions are generated as candidates for verification. They do not claim that a company has
-a currently open role; live job discovery will come from verified ATS and company-careers sources.
+a currently open role. The separate **Sync live jobs** action reads verified public job-board APIs.
+
+## Connect a company job board
+
+Add the company to the watchlist, open **Connect ATS job board** on its card, and choose the
+provider. The board slug is the company identifier in the public careers URL:
+
+- Greenhouse: `boards.greenhouse.io/{slug}`
+- Lever: `jobs.lever.co/{slug}`
+- Ashby: `jobs.ashbyhq.com/{slug}`
+
+Saving a source does not invent jobs or call AI. **Sync live jobs** reads the public board, retains
+roles matching the configured profile, and skips roles already seen on an earlier run.
+
+The current filters include Product Management, Chief of Staff, Founder's Office, Strategy, and
+Growth roles in Bangalore/Bengaluru, Gurgaon/Gurugram, Mumbai, Remote, or India.
 
 ## API overview
 
@@ -64,6 +84,10 @@ a currently open role; live job discovery will come from verified ATS and compan
 | `GET` | `/api/jobs` | List stored jobs |
 | `POST` | `/api/jobs` | Store a job |
 | `POST` | `/api/discovery/suggest` | Generate scored AI suggestions |
+| `PUT` | `/api/companies/{id}/ats-source` | Connect or update a public ATS board |
+| `DELETE` | `/api/companies/{id}/ats-source` | Disable an ATS board |
+| `POST` | `/api/discovery/sync` | Import matching live jobs |
+| `GET` | `/api/discovery/runs` | Read discovery run history |
 | `GET` | `/api/dashboard/stats` | Read dashboard totals |
 
 ## Tests
@@ -99,11 +123,18 @@ agentic-job-search/
 └── docker-compose.yml
 ```
 
-## Next build
+## Product objective and progress
 
-1. ATS discovery adapters for Greenhouse, Lever, Ashby, and selected company career pages.
-2. Scheduled daily discovery with run history and source-level failure reporting.
-3. Resume ingestion and role-match scoring based on Rahul's updated experience.
-4. Recruiter discovery and reply-probability scoring.
-5. Approval-first personalized outreach queue.
+The objective is a daily job-search operating system: discover verified roles, rank companies and
+jobs against Rahul's profile, identify the right recruiter or hiring manager, draft unique
+outreach, and track the funnel while keeping LinkedIn sending behind manual approval.
 
+Completed: local product foundation, PostgreSQL schema, watchlist, initial company scoring,
+AI company suggestions, dashboard, and public ATS job ingestion.
+
+Next:
+
+1. Resume ingestion and job-level match scoring based on Rahul's updated experience.
+2. Recruiter and hiring-manager research with reply-probability scoring.
+3. Approval-first personalized outreach queue.
+4. Reply, referral, and interview tracking.

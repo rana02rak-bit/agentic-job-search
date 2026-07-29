@@ -1,0 +1,17 @@
+{
+  "jobs": [
+    {
+      "id": 101,
+      "title": "Senior Product Manager, AI",
+      "absolute_url": "https://boards.greenhouse.io/acme/jobs/101",
+      "location": {"name": "Bengaluru, India"},
+      "updated_at": "2026-07-28T09:30:00Z"
+    },
+    {
+      "id": 102,
+      "title": "Backend Engineer",
+      "absolute_url": "https://boards.greenhouse.io/acme/jobs/102",
+      "location": {"name": "Remote"}
+    }
+  ]
+}

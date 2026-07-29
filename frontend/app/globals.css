@@ -170,6 +170,30 @@ h1 {
   max-width: 650px;
 }
 
+.hero__actions {
+  align-items: stretch;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  min-width: 190px;
+}
+
+.run-status {
+  color: var(--muted);
+  font-size: 0.66rem;
+  line-height: 1.4;
+  max-width: 220px;
+}
+
+.run-status--completed {
+  color: #5f7413;
+}
+
+.run-status--failed,
+.run-status--completed_with_errors {
+  color: var(--danger);
+}
+
 .button {
   align-items: center;
   border: 0;
@@ -221,6 +245,13 @@ h1 {
 
 .button--full {
   width: 100%;
+}
+
+.button--mini {
+  background: var(--acid);
+  border-radius: 8px;
+  min-height: 36px;
+  padding: 0.45rem 0.7rem;
 }
 
 .notice {
@@ -460,6 +491,42 @@ h1 {
   padding: 0.35rem 0.5rem;
 }
 
+.ats-config {
+  border-top: 1px solid var(--line);
+  margin-top: 1rem;
+  padding-top: 0.8rem;
+}
+
+.ats-config summary {
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 0.7rem;
+  font-weight: 750;
+}
+
+.ats-config form {
+  display: grid;
+  gap: 0.4rem;
+  grid-template-columns: 0.9fr 1.3fr auto;
+  margin-top: 0.7rem;
+}
+
+.ats-config input,
+.ats-config select {
+  background: var(--warm);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  min-width: 0;
+  padding: 0.45rem;
+}
+
+.ats-config p {
+  color: var(--muted);
+  font-size: 0.66rem;
+  line-height: 1.4;
+  margin: 0.55rem 0 0.25rem;
+}
+
 .text-button {
   background: transparent;
   border: 0;
@@ -632,6 +699,10 @@ aside {
     flex-direction: column;
     gap: 1.5rem;
     padding-top: 48px;
+  }
+
+  .hero__actions {
+    width: 100%;
   }
 
   .metrics {

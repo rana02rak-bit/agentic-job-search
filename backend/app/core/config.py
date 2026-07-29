@@ -11,6 +11,8 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+psycopg://rahulgpt:rahulgpt_local@localhost:5432/rahulgpt"
     openai_api_key: str | None = None
     openai_model: str = "gpt-5.6-luna"
+    discovery_run_hour: int = Field(default=8, ge=0, le=23)
+    discovery_timezone: str = "Asia/Kolkata"
     backend_cors_origins: Annotated[list[str], NoDecode] = Field(
         default_factory=lambda: ["http://localhost:3000"]
     )

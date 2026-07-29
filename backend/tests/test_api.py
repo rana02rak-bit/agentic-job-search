@@ -7,6 +7,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.db import Base, get_db
 from app.main import app
+from app.services.ats.base import AtsJob
 
 engine = create_engine(
     "sqlite+pysqlite://",
@@ -92,5 +93,56 @@ def test_job_storage_rejects_duplicate_url() -> None:
 
     list_response = client.get("/api/jobs?today_only=true")
     assert list_response.status_code == 200
-    assert len(list_response.json()) == 1
+    assert any(job["url"] == payload["url"] for job in list_response.json())
 
+
+def test_ats_source_sync_is_idempotent(monkeypatch) -> None:
+    company = client.post(
+        "/api/companies",
+        json={"name": "ATS Test Company", "priority": "HIGH"},
+    ).json()
+    source_response = client.put(
+        f"/api/companies/{company['id']}/ats-source",
+        json={"provider": "GREENHOUSE", "slug": "ats-test-company"},
+    )
+    assert source_response.status_code == 200
+    assert source_response.json()["provider"] == "GREENHOUSE"
+
+    def fake_fetch(*_args) -> list[AtsJob]:
+        return [
+            AtsJob(
+                external_id="external-pm-1",
+                title="Senior Product Manager, AI",
+                location="Bangalore, India",
+                url="https://boards.greenhouse.io/ats-test-company/jobs/1",
+            ),
+            AtsJob(
+                external_id="external-eng-1",
+                title="Software Engineer",
+                location="Bangalore, India",
+                url="https://boards.greenhouse.io/ats-test-company/jobs/2",
+            ),
+        ]
+
+    monkeypatch.setattr("app.services.ats.runner.fetch_jobs", fake_fetch)
+
+    first_sync = client.post("/api/discovery/sync")
+    assert first_sync.status_code == 200
+    first_run = first_sync.json()
+    assert first_run["status"] == "COMPLETED"
+    assert first_run["jobs_found"] == 1
+    assert first_run["source_runs"][0]["jobs_seen"] == 2
+    assert first_run["source_runs"][0]["jobs_matched"] == 1
+
+    second_sync = client.post("/api/discovery/sync")
+    assert second_sync.status_code == 200
+    assert second_sync.json()["jobs_found"] == 0
+
+    runs_response = client.get("/api/discovery/runs?limit=2")
+    assert runs_response.status_code == 200
+    assert len(runs_response.json()) == 2
+
+    disconnect_response = client.delete(f"/api/companies/{company['id']}/ats-source")
+    assert disconnect_response.status_code == 204
+    disabled_source = client.get(f"/api/companies/{company['id']}/ats-source").json()
+    assert disabled_source["enabled"] is False

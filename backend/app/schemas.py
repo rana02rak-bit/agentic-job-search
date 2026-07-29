@@ -15,6 +15,35 @@ class SourceValue(StrEnum):
     AI = "AI"
 
 
+class AtsProviderValue(StrEnum):
+    GREENHOUSE = "GREENHOUSE"
+    LEVER = "LEVER"
+    ASHBY = "ASHBY"
+
+
+class AtsSourceUpsert(BaseModel):
+    provider: AtsProviderValue
+    slug: str = Field(min_length=1, max_length=200, pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+
+    @field_validator("slug")
+    @classmethod
+    def normalize_slug(cls, value: str) -> str:
+        return value.strip()
+
+
+class AtsSourceRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    company_id: int
+    provider: AtsProviderValue
+    slug: str
+    enabled: bool
+    last_checked_at: datetime | None
+    last_success_at: datetime | None
+    last_error: str | None
+
+
 class CompanyBase(BaseModel):
     name: str = Field(min_length=2, max_length=160)
     website: HttpUrl | None = None
@@ -60,6 +89,7 @@ class CompanyRead(BaseModel):
     score_reason: str | None
     last_checked: datetime | None
     created_at: datetime
+    ats_source: AtsSourceRead | None = None
 
 
 class JobCreate(BaseModel):
@@ -107,6 +137,34 @@ class DiscoveryRequest(BaseModel):
     count: int = Field(default=5, ge=1, le=10)
 
 
+class DiscoverySourceRunRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    ats_source_id: int
+    status: str
+    jobs_seen: int
+    jobs_matched: int
+    jobs_created: int
+    error: str | None
+    started_at: datetime
+    completed_at: datetime | None
+
+
+class DiscoveryRunRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    status: str
+    companies_checked: int
+    suggestions_created: int
+    jobs_found: int
+    error: str | None
+    started_at: datetime
+    completed_at: datetime | None
+    source_runs: list[DiscoverySourceRunRead] = Field(default_factory=list)
+
+
 class DashboardStats(BaseModel):
     companies: int
     watchlisted: int
@@ -117,4 +175,3 @@ class DashboardStats(BaseModel):
     replies: int = 0
     referrals: int = 0
     interviews: int = 0
-

@@ -1,5 +1,17 @@
 export type Priority = "HIGH" | "MEDIUM" | "LOW";
 export type CompanySource = "USER" | "AI";
+export type AtsProvider = "GREENHOUSE" | "LEVER" | "ASHBY";
+
+export interface AtsSource {
+  id: number;
+  company_id: number;
+  provider: AtsProvider;
+  slug: string;
+  enabled: boolean;
+  last_checked_at: string | null;
+  last_success_at: string | null;
+  last_error: string | null;
+}
 
 export interface Company {
   id: number;
@@ -19,6 +31,7 @@ export interface Company {
   score_reason: string | null;
   last_checked: string | null;
   created_at: string;
+  ats_source: AtsSource | null;
 }
 
 export interface Job {
@@ -44,6 +57,30 @@ export interface DashboardStats {
   replies: number;
   referrals: number;
   interviews: number;
+}
+
+export interface DiscoverySourceRun {
+  id: number;
+  ats_source_id: number;
+  status: string;
+  jobs_seen: number;
+  jobs_matched: number;
+  jobs_created: number;
+  error: string | null;
+  started_at: string;
+  completed_at: string | null;
+}
+
+export interface DiscoveryRun {
+  id: number;
+  status: string;
+  companies_checked: number;
+  suggestions_created: number;
+  jobs_found: number;
+  error: string | null;
+  started_at: string;
+  completed_at: string | null;
+  source_runs: DiscoverySourceRun[];
 }
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
@@ -72,6 +109,8 @@ export const api = {
   companies: () => request<Company[]>("/api/companies"),
   jobs: () => request<Job[]>("/api/jobs?today_only=true"),
   stats: () => request<DashboardStats>("/api/dashboard/stats"),
+  discoveryRuns: (limit = 5) =>
+    request<DiscoveryRun[]>(`/api/discovery/runs?limit=${limit}`),
   addCompany: (payload: {
     name: string;
     website?: string;
@@ -96,5 +135,17 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ count }),
     }),
+  syncJobs: () =>
+    request<DiscoveryRun>("/api/discovery/sync", {
+      method: "POST",
+    }),
+  saveAtsSource: (companyId: number, provider: AtsProvider, slug: string) =>
+    request<AtsSource>(`/api/companies/${companyId}/ats-source`, {
+      method: "PUT",
+      body: JSON.stringify({ provider, slug }),
+    }),
+  removeAtsSource: (companyId: number) =>
+    request<void>(`/api/companies/${companyId}/ats-source`, {
+      method: "DELETE",
+    }),
 };
-

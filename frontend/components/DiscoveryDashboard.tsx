@@ -1,7 +1,15 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
-import { api, Company, DashboardStats, Job, Priority } from "@/lib/api";
+import {
+  api,
+  AtsProvider,
+  Company,
+  DashboardStats,
+  DiscoveryRun,
+  Job,
+  Priority,
+} from "@/lib/api";
 import { CompanyCard } from "./CompanyCard";
 import { MetricCard } from "./MetricCard";
 
@@ -18,18 +26,20 @@ const emptyStats: DashboardStats = {
 };
 
 async function fetchDashboardData() {
-  const [companies, jobs, stats] = await Promise.all([
+  const [companies, jobs, stats, runs] = await Promise.all([
     api.companies(),
     api.jobs(),
     api.stats(),
+    api.discoveryRuns(5),
   ]);
-  return { companies, jobs, stats };
+  return { companies, jobs, stats, runs };
 }
 
 export function DiscoveryDashboard() {
   const [companies, setCompanies] = useState<Company[]>([]);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [stats, setStats] = useState<DashboardStats>(emptyStats);
+  const [runs, setRuns] = useState<DiscoveryRun[]>([]);
   const [name, setName] = useState("");
   const [website, setWebsite] = useState("");
   const [location, setLocation] = useState("Bangalore");
@@ -44,6 +54,7 @@ export function DiscoveryDashboard() {
       setCompanies(data.companies);
       setJobs(data.jobs);
       setStats(data.stats);
+      setRuns(data.runs);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Could not load the dashboard.");
     }
@@ -57,6 +68,7 @@ export function DiscoveryDashboard() {
         setCompanies(data.companies);
         setJobs(data.jobs);
         setStats(data.stats);
+        setRuns(data.runs);
       })
       .catch((caught: unknown) => {
         if (!active) return;
@@ -75,6 +87,7 @@ export function DiscoveryDashboard() {
     () => companies.filter((company) => company.source === "AI" && !company.is_watchlisted),
     [companies],
   );
+  const latestRun = runs[0];
 
   async function submitCompany(event: FormEvent) {
     event.preventDefault();
@@ -135,6 +148,39 @@ export function DiscoveryDashboard() {
     }
   }
 
+  async function syncJobs() {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.syncJobs();
+      await load();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Could not sync live jobs.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function saveAtsSource(companyId: number, provider: AtsProvider, slug: string) {
+    setError(null);
+    try {
+      await api.saveAtsSource(companyId, provider, slug);
+      await load();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Could not connect the job board.");
+    }
+  }
+
+  async function removeAtsSource(companyId: number) {
+    setError(null);
+    try {
+      await api.removeAtsSource(companyId);
+      await load();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Could not disconnect the job board.");
+    }
+  }
+
   return (
     <main>
       <header className="topbar">
@@ -164,9 +210,20 @@ export function DiscoveryDashboard() {
             the pipeline.
           </p>
         </div>
-        <button className="button button--primary" onClick={discover} disabled={busy}>
-          <span aria-hidden="true">↻</span> {busy ? "Working…" : "Run discovery"}
-        </button>
+        <div className="hero__actions">
+          <button className="button button--primary" onClick={syncJobs} disabled={busy}>
+            <span aria-hidden="true">↻</span> {busy ? "Working…" : "Sync live jobs"}
+          </button>
+          <button className="button button--secondary" onClick={discover} disabled={busy}>
+            Find AI companies
+          </button>
+          {latestRun && (
+            <span className={`run-status run-status--${latestRun.status.toLowerCase()}`}>
+              Last run: {latestRun.status.replaceAll("_", " ").toLowerCase()} ·{" "}
+              {latestRun.jobs_found} new jobs
+            </span>
+          )}
+        </div>
       </section>
 
       {error && (
@@ -257,6 +314,8 @@ export function DiscoveryDashboard() {
                   updateCompany(company.id, { priority: nextPriority })
                 }
                 onRemove={() => removeCompany(company.id)}
+                onAtsSave={(provider, slug) => saveAtsSource(company.id, provider, slug)}
+                onAtsRemove={() => removeAtsSource(company.id)}
               />
             ))}
             {watchlist.length === 0 && (
@@ -319,7 +378,7 @@ export function DiscoveryDashboard() {
             {jobs.length === 0 && (
               <div className="empty-state empty-state--aside">
                 <strong>No jobs stored yet.</strong>
-                <p>ATS discovery connectors are the next build step.</p>
+                <p>Connect a company&apos;s ATS board, then sync live jobs.</p>
               </div>
             )}
           </div>
