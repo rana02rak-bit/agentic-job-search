@@ -95,6 +95,7 @@ def _request(
     json: dict[str, Any] | None = None,
     params: dict[str, Any] | None = None,
     retry_on_read_timeout: bool = False,
+    prevent_duplicate_on_timeout: bool = False,
 ) -> dict[str, Any]:
     attempts = 2 if retry_on_read_timeout else 1
     for attempt in range(attempts):
@@ -105,7 +106,7 @@ def _request(
                 headers=_headers(settings),
                 json=json,
                 params=params,
-                timeout=httpx.Timeout(connect=15, read=90, write=30, pool=15),
+                timeout=httpx.Timeout(connect=10, read=30, write=30, pool=10),
                 verify=_ssl_context(settings),
                 trust_env=True,
             )
@@ -113,11 +114,16 @@ def _request(
         except httpx.ReadTimeout as exc:
             if attempt + 1 < attempts:
                 continue
-            if not retry_on_read_timeout:
+            if prevent_duplicate_on_timeout:
                 raise ConnectSafelyUnavailable(
                     "ConnectSafely did not confirm the response before timeout. "
                     "The request was not retried to prevent a duplicate LinkedIn message; "
                     "check the conversation before trying again."
+                ) from exc
+            if not retry_on_read_timeout:
+                raise ConnectSafelyUnavailable(
+                    "ConnectSafely did not respond within 30 seconds. "
+                    "The provider is temporarily slow or unavailable."
                 ) from exc
             raise ConnectSafelyUnavailable(
                 "ConnectSafely did not respond after two read attempts. "
@@ -283,7 +289,6 @@ def _resolve_linkedin_company_id(
         "POST",
         "/linkedin/search/companies",
         json=body,
-        retry_on_read_timeout=True,
     )
     companies = _company_items(payload)
     exact_matches = [
@@ -370,7 +375,6 @@ def discover_contacts(
         "POST",
         "/linkedin/search/people",
         json=body,
-        retry_on_read_timeout=True,
     )
     if not _items(payload) and linkedin_company_id:
         try:
@@ -379,7 +383,6 @@ def discover_contacts(
                 "POST",
                 "/linkedin/search/people/v2",
                 json=body,
-                retry_on_read_timeout=True,
             )
         except ConnectSafelyUnavailable:
             pass
@@ -438,6 +441,7 @@ def send_linkedin_message(
             "POST",
             "/linkedin/conversations/send",
             json=body,
+            prevent_duplicate_on_timeout=True,
         )
     )
     message_id = data.get("messageId") or data.get("id")
