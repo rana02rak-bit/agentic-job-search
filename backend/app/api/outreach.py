@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+from threading import Lock
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, HTTPException, status
@@ -23,12 +24,18 @@ from app.schemas import (
     OutreachRead,
     OutreachUpdate,
 )
+from app.services.connectsafely import (
+    ConnectSafelyUnavailable,
+    get_account_status,
+    send_linkedin_message,
+)
 from app.services.message_generator import (
     MessageGenerationUnavailable,
     generate_outreach_message,
 )
 
 router = APIRouter(prefix="/outreach", tags=["outreach"])
+SEND_RESERVATION_LOCK = Lock()
 
 
 def outreach_query():
@@ -110,6 +117,11 @@ def generate_message(
             status_code=400,
             detail="The person and job must belong to the same company",
         )
+    if not recruiter.linkedin_url:
+        raise HTTPException(
+            status_code=409,
+            detail="This person has no LinkedIn profile URL.",
+        )
     try:
         generated = generate_outreach_message(
             get_settings(),
@@ -124,10 +136,11 @@ def generate_message(
     message = OutreachMessage(
         recruiter_id=recruiter.id,
         job_id=job.id,
+        subject=generated.subject,
         body=generated.body,
         rationale=generated.rationale,
         status=OutreachStatus.DRAFT.value,
-        delivery_mode=get_settings().linkedin_send_mode.upper(),
+        delivery_mode="CONNECTSAFELY",
     )
     db.add(message)
     db.commit()
@@ -143,6 +156,7 @@ def edit_message(
     message = load_message(db, message_id)
     if message.status != OutreachStatus.DRAFT.value:
         raise HTTPException(status_code=409, detail="Only draft messages can be edited")
+    message.subject = payload.subject
     message.body = payload.body
     db.commit()
     return load_message(db, message.id)
@@ -153,14 +167,23 @@ def approve_message(message_id: int, db: DbSession) -> OutreachAction:
     message = load_message(db, message_id)
     if message.status != OutreachStatus.DRAFT.value:
         raise HTTPException(status_code=409, detail="Only draft messages can be approved")
+    if not message.recruiter.linkedin_url:
+        raise HTTPException(status_code=409, detail="Recipient LinkedIn profile is missing")
     message.status = OutreachStatus.APPROVED.value
     message.approved_at = datetime.now(UTC)
     db.commit()
     message = load_message(db, message.id)
+    settings = get_settings()
+    automatic_send_available = False
+    if settings.connectsafely_api_key:
+        try:
+            automatic_send_available = get_account_status(settings).connected
+        except ConnectSafelyUnavailable:
+            automatic_send_available = False
     return OutreachAction(
         message=message,
         linkedin_url=message.recruiter.linkedin_url,
-        automatic_send_available=False,
+        automatic_send_available=automatic_send_available,
     )
 
 
@@ -170,17 +193,45 @@ def send_message(message_id: int, db: DbSession) -> OutreachMessage:
     if message.status != OutreachStatus.APPROVED.value:
         raise HTTPException(status_code=409, detail="Approve the message before sending")
     settings = get_settings()
-    if settings.linkedin_send_mode.casefold() != "partner_api":
-        message.delivery_error = (
-            "Automatic LinkedIn sending requires approved LinkedIn partner API access. "
-            "Use Copy + Open LinkedIn, then mark the message sent."
+    if not settings.connectsafely_api_key:
+        raise HTTPException(
+            status_code=409,
+            detail="Configure CONNECTSAFELY_API_KEY before sending",
         )
+    if not message.recruiter.linkedin_url:
+        raise HTTPException(status_code=409, detail="Recipient LinkedIn profile is missing")
+
+    with SEND_RESERVATION_LOCK:
+        if count_sent_today(db) >= settings.outreach_daily_send_limit:
+            raise HTTPException(
+                status_code=429,
+                detail=f"Daily LinkedIn limit of {settings.outreach_daily_send_limit} reached",
+            )
+        message.status = OutreachStatus.SENDING.value
+        message.sent_at = datetime.now(UTC)
+        message.delivery_error = None
         db.commit()
-        raise HTTPException(status_code=409, detail=message.delivery_error)
-    raise HTTPException(
-        status_code=503,
-        detail="LinkedIn partner sender credentials and endpoint are not configured",
-    )
+
+    try:
+        provider_message_id, provider_thread_id = send_linkedin_message(
+            settings,
+            message.recruiter.linkedin_url,
+            message.body,
+            message.subject,
+        )
+    except ConnectSafelyUnavailable as exc:
+        message.status = OutreachStatus.APPROVED.value
+        message.sent_at = None
+        message.delivery_error = str(exc)
+        db.commit()
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    message.status = OutreachStatus.SENT.value
+    message.provider_message_id = provider_message_id
+    message.provider_thread_id = provider_thread_id
+    message.delivery_error = None
+    db.commit()
+    return load_message(db, message.id)
 
 
 @router.post("/messages/{message_id}/mark-sent", response_model=OutreachRead)
@@ -216,12 +267,30 @@ def mark_message_replied(message_id: int, db: DbSession) -> OutreachMessage:
 @router.get("/capabilities", response_model=DeliveryCapabilities)
 def delivery_capabilities(db: DbSession) -> DeliveryCapabilities:
     settings = get_settings()
+    connected = False
+    account_name = None
+    reason = "Add a fresh ConnectSafely API key locally, then connect LinkedIn."
+    if settings.connectsafely_api_key:
+        try:
+            account = get_account_status(settings)
+            connected = account.connected
+            account_name = account.name
+            reason = (
+                f"Approved DMs send through {account.name or 'the connected LinkedIn account'}."
+                if connected
+                else "Connect your LinkedIn account in the ConnectSafely dashboard."
+            )
+        except ConnectSafelyUnavailable as exc:
+            reason = str(exc)
     return DeliveryCapabilities(
-        automatic_linkedin_send=False,
-        mode=settings.linkedin_send_mode.upper(),
+        automatic_linkedin_send=connected,
+        mode="CONNECTSAFELY",
+        connectsafely_configured=bool(settings.connectsafely_api_key),
+        account_connected=connected,
+        account_name=account_name,
         daily_limit=settings.outreach_daily_send_limit,
         sent_today=count_sent_today(db),
-        reason="Automatic LinkedIn messaging needs approved partner API access.",
+        reason=reason,
     )
 
 

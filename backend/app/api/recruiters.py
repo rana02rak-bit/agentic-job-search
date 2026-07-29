@@ -3,9 +3,20 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 
+from app.core.config import get_settings
 from app.core.dependencies import DbSession
 from app.models import Company, Job, Recruiter, RecruiterShortlist
-from app.schemas import RecruiterCreate, RecruiterRead, ShortlistRequest
+from app.schemas import (
+    ContactDiscoveryRequest,
+    ContactDiscoveryResult,
+    RecruiterCreate,
+    RecruiterRead,
+    ShortlistRequest,
+)
+from app.services.connectsafely import (
+    ConnectSafelyUnavailable,
+    discover_contacts,
+)
 from app.services.recruiter_scoring import score_reply_probability
 
 router = APIRouter(prefix="/recruiters", tags=["recruiters"])
@@ -43,7 +54,10 @@ def create_recruiter(payload: RecruiterCreate, db: DbSession) -> Recruiter:
     recruiter = Recruiter(
         company_id=payload.company_id,
         name=" ".join(payload.name.split()),
-        linkedin_url=str(payload.linkedin_url),
+        email=str(payload.email).casefold() if payload.email else None,
+        email_status="MANUAL" if payload.email else None,
+        linkedin_url=str(payload.linkedin_url) if payload.linkedin_url else None,
+        source="MANUAL",
         designation=payload.designation,
         activity=payload.activity,
         mutuals=payload.mutuals,
@@ -60,9 +74,92 @@ def create_recruiter(payload: RecruiterCreate, db: DbSession) -> Recruiter:
         db.rollback()
         raise HTTPException(
             status_code=409,
-            detail="This LinkedIn profile is already stored for the company",
+            detail="This email or LinkedIn profile is already stored for the company",
         ) from exc
     return db.scalar(recruiter_query().where(Recruiter.id == recruiter.id))
+
+
+@router.post("/discover", response_model=ContactDiscoveryResult)
+def discover_recruiters(
+    payload: ContactDiscoveryRequest,
+    db: DbSession,
+) -> ContactDiscoveryResult:
+    company = db.get(Company, payload.company_id)
+    if not company:
+        raise HTTPException(status_code=404, detail="Company not found")
+    job = db.get(Job, payload.job_id) if payload.job_id else None
+    if payload.job_id and (not job or job.company_id != company.id):
+        raise HTTPException(
+            status_code=400,
+            detail="Choose a job from the selected company",
+        )
+    try:
+        discovered = discover_contacts(get_settings(), company, job, payload.limit)
+    except ConnectSafelyUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    stored_ids: list[int] = []
+    result_ids: list[int] = []
+    skipped_duplicates = 0
+    for contact in discovered:
+        existing = db.scalar(
+            select(Recruiter).where(
+                Recruiter.company_id == company.id,
+                Recruiter.linkedin_url == contact.linkedin_url,
+            )
+        )
+        if existing:
+            result_ids.append(existing.id)
+            skipped_duplicates += 1
+            continue
+        recruiter = Recruiter(
+            company_id=company.id,
+            name=contact.name,
+            linkedin_url=contact.linkedin_url,
+            source="CONNECTSAFELY",
+            external_id=contact.external_id,
+            designation=contact.designation,
+            activity=contact.activity,
+            mutuals=contact.mutuals,
+            reply_probability=score_reply_probability(
+                contact.designation,
+                contact.activity,
+                contact.mutuals,
+            ),
+        )
+        db.add(recruiter)
+        db.flush()
+        if job:
+            db.add(RecruiterShortlist(recruiter_id=recruiter.id, job_id=job.id))
+        stored_ids.append(recruiter.id)
+        result_ids.append(recruiter.id)
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="Contact discovery produced a duplicate record; run it again",
+        ) from exc
+
+    people = (
+        list(
+            db.scalars(
+                recruiter_query()
+                .where(Recruiter.id.in_(result_ids))
+                .order_by(Recruiter.reply_probability.desc(), Recruiter.name)
+            ).all()
+        )
+        if result_ids
+        else []
+    )
+    return ContactDiscoveryResult(
+        company_id=company.id,
+        discovered=len(discovered),
+        stored=len(stored_ids),
+        skipped_duplicates=skipped_duplicates,
+        people=people,
+    )
 
 
 @router.post("/{recruiter_id}/shortlist", response_model=RecruiterRead)

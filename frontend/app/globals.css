@@ -705,6 +705,43 @@ aside {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
+.integration-grid {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-bottom: 0.65rem;
+}
+
+.connection-card {
+  align-items: center;
+  display: flex;
+  gap: 0.8rem;
+}
+
+.connection-card h3 {
+  font-size: 0.9rem;
+  margin: 0 0 0.2rem;
+}
+
+.connection-card p {
+  color: var(--muted);
+  font-size: 0.7rem;
+  margin: 0;
+}
+
+.status-dot {
+  background: #e79f80;
+  border-radius: 50%;
+  flex: 0 0 auto;
+  height: 11px;
+  width: 11px;
+}
+
+.status-dot.is-ready {
+  background: #8daa24;
+  box-shadow: 0 0 0 4px rgba(141, 170, 36, 0.13);
+}
+
 .panel {
   background: var(--card);
   border: 1px solid var(--line);
@@ -783,6 +820,23 @@ aside {
   display: grid;
   gap: 0.7rem;
   grid-template-columns: 1fr 1fr;
+}
+
+.manual-entry {
+  border-top: 1px solid var(--line);
+  margin-top: 0.35rem;
+  padding-top: 0.8rem;
+}
+
+.manual-entry summary {
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 0.7rem;
+  font-weight: 750;
+}
+
+.manual-entry__body {
+  margin-top: 0.8rem;
 }
 
 .people-list {
@@ -921,6 +975,27 @@ aside {
   min-height: 145px;
 }
 
+.message-card input {
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  color: var(--ink);
+  display: block;
+  margin: 0.35rem 0 0.8rem;
+  min-height: 42px;
+  outline: none;
+  padding: 0.65rem;
+  width: 100%;
+}
+
+.message-card input:focus {
+  border-color: #849f21;
+}
+
+.status-badge--sending {
+  background: #fff0bd;
+}
+
 .message-rationale {
   color: var(--muted);
   font-size: 0.7rem;
@@ -998,7 +1073,8 @@ aside {
   }
 
   .workflow-grid,
-  .workflow-grid--three {
+  .workflow-grid--three,
+  .integration-grid {
     grid-template-columns: 1fr;
   }
 }

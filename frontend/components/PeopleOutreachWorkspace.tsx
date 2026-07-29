@@ -6,6 +6,7 @@ import {
   CandidateProfile,
   Company,
   DeliveryCapabilities,
+  IntegrationStatus,
   Job,
   OutreachMessage,
   Recruiter,
@@ -17,14 +18,16 @@ interface PeopleOutreachWorkspaceProps {
 }
 
 async function loadWorkspace() {
-  const [people, jobs, messages, capabilities, profile] = await Promise.all([
-    api.recruiters(),
-    api.allJobs(),
-    api.outreachMessages(),
-    api.outreachCapabilities(),
-    api.profile().catch(() => null),
-  ]);
-  return { people, jobs, messages, capabilities, profile };
+  const [people, jobs, messages, capabilities, integrations, profile] =
+    await Promise.all([
+      api.recruiters(),
+      api.allJobs(),
+      api.outreachMessages(),
+      api.outreachCapabilities(),
+      api.integrationStatus(),
+      api.profile().catch(() => null),
+    ]);
+  return { people, jobs, messages, capabilities, integrations, profile };
 }
 
 export function PeopleOutreachWorkspace({
@@ -35,13 +38,20 @@ export function PeopleOutreachWorkspace({
   const [jobs, setJobs] = useState<Job[]>([]);
   const [messages, setMessages] = useState<OutreachMessage[]>([]);
   const [capabilities, setCapabilities] = useState<DeliveryCapabilities | null>(null);
+  const [integrations, setIntegrations] = useState<IntegrationStatus | null>(null);
   const [profile, setProfile] = useState<CandidateProfile | null>(null);
+
+  const [discoveryCompanyId, setDiscoveryCompanyId] = useState("");
+  const [discoveryJobId, setDiscoveryJobId] = useState("");
+  const [discoveryLimit, setDiscoveryLimit] = useState("5");
+
   const [companyId, setCompanyId] = useState("");
   const [personName, setPersonName] = useState("");
   const [linkedinUrl, setLinkedinUrl] = useState("");
   const [designation, setDesignation] = useState("");
   const [activity, setActivity] = useState("");
   const [mutuals, setMutuals] = useState("0");
+
   const [resumeText, setResumeText] = useState("");
   const [positioning, setPositioning] = useState(
     "AI product, Founder's Office, P2P transformation, consumer internet, and high-ownership roles.",
@@ -49,56 +59,59 @@ export function PeopleOutreachWorkspace({
   const [selectedPersonId, setSelectedPersonId] = useState("");
   const [selectedJobId, setSelectedJobId] = useState("");
   const [extraContext, setExtraContext] = useState("");
+  const [draftSubjects, setDraftSubjects] = useState<Record<number, string>>({});
   const [draftBodies, setDraftBodies] = useState<Record<number, string>>({});
   const [busy, setBusy] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  const applyWorkspace = useCallback(
+    (data: Awaited<ReturnType<typeof loadWorkspace>>) => {
+      setPeople(data.people);
+      setJobs(data.jobs);
+      setMessages(data.messages);
+      setCapabilities(data.capabilities);
+      setIntegrations(data.integrations);
+      setProfile(data.profile);
+      if (data.profile) {
+        setResumeText(data.profile.resume_text);
+        setPositioning(data.profile.positioning ?? "");
+      }
+      setDraftSubjects(
+        Object.fromEntries(
+          data.messages.map((message) => [message.id, message.subject ?? ""]),
+        ),
+      );
+      setDraftBodies(
+        Object.fromEntries(data.messages.map((message) => [message.id, message.body])),
+      );
+    },
+    [],
+  );
+
   const reload = useCallback(async () => {
-    const data = await loadWorkspace();
-    setPeople(data.people);
-    setJobs(data.jobs);
-    setMessages(data.messages);
-    setCapabilities(data.capabilities);
-    setProfile(data.profile);
-    if (data.profile) {
-      setResumeText(data.profile.resume_text);
-      setPositioning(data.profile.positioning ?? "");
-    }
-    setDraftBodies(
-      Object.fromEntries(data.messages.map((message) => [message.id, message.body])),
-    );
-  }, []);
+    applyWorkspace(await loadWorkspace());
+  }, [applyWorkspace]);
 
   useEffect(() => {
     let active = true;
     void loadWorkspace()
       .then((data) => {
-        if (!active) return;
-        setPeople(data.people);
-        setJobs(data.jobs);
-        setMessages(data.messages);
-        setCapabilities(data.capabilities);
-        setProfile(data.profile);
-        if (data.profile) {
-          setResumeText(data.profile.resume_text);
-          setPositioning(data.profile.positioning ?? "");
-        }
-        setDraftBodies(
-          Object.fromEntries(data.messages.map((message) => [message.id, message.body])),
-        );
+        if (active) applyWorkspace(data);
       })
       .catch((caught: unknown) => {
         if (!active) return;
-        setError(caught instanceof Error ? caught.message : "Could not load people and outreach.");
+        setError(caught instanceof Error ? caught.message : "Could not load outreach.");
       });
     return () => {
       active = false;
     };
-  }, []);
+  }, [applyWorkspace]);
 
   const watchlist = companies.filter((company) => company.is_watchlisted);
-  const shortlisted = people.filter((person) => person.is_shortlisted);
+  const shortlisted = people.filter(
+    (person) => person.is_shortlisted && Boolean(person.linkedin_url),
+  );
   const selectedPerson = people.find((person) => person.id === Number(selectedPersonId));
   const selectedCompanyJobs = useMemo(
     () =>
@@ -106,6 +119,9 @@ export function PeopleOutreachWorkspace({
         ? jobs.filter((job) => job.company_id === selectedPerson.company_id)
         : [],
     [jobs, selectedPerson],
+  );
+  const discoveryJobs = jobs.filter(
+    (job) => job.company_id === Number(discoveryCompanyId),
   );
 
   async function runAction(key: string, action: () => Promise<void>) {
@@ -117,14 +133,27 @@ export function PeopleOutreachWorkspace({
       await reload();
       await onChanged();
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "The action could not be completed.");
+      setError(caught instanceof Error ? caught.message : "The action failed.");
     } finally {
       setBusy(null);
     }
   }
 
-  async function addPerson(event: FormEvent) {
+  async function discoverPeople(event: FormEvent) {
     event.preventDefault();
+    await runAction("discover-people", async () => {
+      const result = await api.discoverRecruiters({
+        company_id: Number(discoveryCompanyId),
+        job_id: discoveryJobId ? Number(discoveryJobId) : undefined,
+        limit: Number(discoveryLimit),
+      });
+      setNotice(
+        `ConnectSafely found ${result.discovered}; ${result.stored} new people saved and ${result.skipped_duplicates} duplicates skipped.`,
+      );
+    });
+  }
+
+  async function addPerson() {
     await runAction("add-person", async () => {
       await api.addRecruiter({
         company_id: Number(companyId),
@@ -139,7 +168,7 @@ export function PeopleOutreachWorkspace({
       setDesignation("");
       setActivity("");
       setMutuals("0");
-      setNotice("Person added. Review the reply score and shortlist when ready.");
+      setNotice("Person added. Shortlist them against a job when ready.");
     });
   }
 
@@ -151,7 +180,7 @@ export function PeopleOutreachWorkspace({
         resume_text: resumeText,
         positioning: positioning || undefined,
       });
-      setNotice("Resume profile saved for message personalization.");
+      setNotice("Resume profile saved for Gemini personalization.");
     });
   }
 
@@ -164,14 +193,16 @@ export function PeopleOutreachWorkspace({
         extra_context: extraContext.trim() || undefined,
       });
       setExtraContext("");
-      setNotice("A unique draft is ready for your review.");
+      setNotice("Gemini created a unique LinkedIn draft for review.");
     });
   }
 
-  async function copyAndOpen(message: OutreachMessage) {
-    await navigator.clipboard.writeText(message.body);
-    window.open(message.recruiter.linkedin_url, "_blank", "noopener,noreferrer");
-    setNotice("Message copied and LinkedIn opened. Send it there, then mark it sent here.");
+  function subjectFor(message: OutreachMessage) {
+    return draftSubjects[message.id] ?? message.subject ?? "";
+  }
+
+  function bodyFor(message: OutreachMessage) {
+    return draftBodies[message.id] ?? message.body;
   }
 
   return (
@@ -185,22 +216,62 @@ export function PeopleOutreachWorkspace({
       <div className="workflow__heading" id="recruiters">
         <div>
           <p className="eyebrow">People intelligence</p>
-          <h2>Find, score and shortlist the right people.</h2>
+          <h2>Discover, shortlist and message the right people.</h2>
         </div>
         <span>{shortlisted.length} shortlisted</span>
       </div>
 
+      <div className="integration-grid">
+        <article className="panel connection-card">
+          <span className={integrations?.gemini_configured ? "status-dot is-ready" : "status-dot"} />
+          <div>
+            <h3>Gemini</h3>
+            <p>
+              {integrations?.gemini_configured
+                ? "Ready for company selection and personal drafts"
+                : "GEMINI_API_KEY is missing"}
+            </p>
+          </div>
+        </article>
+        <article className="panel connection-card">
+          <span
+            className={
+              integrations?.connectsafely_account_connected
+                ? "status-dot is-ready"
+                : "status-dot"
+            }
+          />
+          <div>
+            <h3>ConnectSafely + LinkedIn</h3>
+            <p>
+              {integrations?.connectsafely_account_connected
+                ? `Connected as ${integrations.connectsafely_account_name ?? "LinkedIn account"}`
+                : integrations?.connectsafely_configured
+                  ? "API key found; connect LinkedIn in ConnectSafely"
+                  : "CONNECTSAFELY_API_KEY is missing"}
+            </p>
+          </div>
+        </article>
+      </div>
+      <p className="helper">
+        Secrets are read only by the backend from your local .env file and never entered in this
+        browser screen.
+      </p>
+
       <div className="workflow-grid">
-        <form className="panel form-stack" onSubmit={addPerson}>
+        <form className="panel form-stack" onSubmit={discoverPeople}>
           <div className="panel__heading">
-            <h3>Add a recruiter or hiring manager</h3>
-            <span>Stored in Postgres</span>
+            <h3>Auto-find people</h3>
+            <span>ConnectSafely search</span>
           </div>
           <label>
-            Company
+            Target company
             <select
-              value={companyId}
-              onChange={(event) => setCompanyId(event.target.value)}
+              value={discoveryCompanyId}
+              onChange={(event) => {
+                setDiscoveryCompanyId(event.target.value);
+                setDiscoveryJobId("");
+              }}
               required
             >
               <option value="">Select company</option>
@@ -211,55 +282,114 @@ export function PeopleOutreachWorkspace({
               ))}
             </select>
           </label>
-          <div className="form-pair">
-            <label>
-              Name
-              <input
-                value={personName}
-                onChange={(event) => setPersonName(event.target.value)}
-                placeholder="Priya Sharma"
-                required
-              />
-            </label>
-            <label>
-              Designation
-              <input
-                value={designation}
-                onChange={(event) => setDesignation(event.target.value)}
-                placeholder="Talent Partner"
-              />
-            </label>
-          </div>
           <label>
-            LinkedIn profile
-            <input
-              type="url"
-              value={linkedinUrl}
-              onChange={(event) => setLinkedinUrl(event.target.value)}
-              placeholder="https://www.linkedin.com/in/…"
-              required
-            />
+            Job for auto-shortlist
+            <select
+              value={discoveryJobId}
+              onChange={(event) => setDiscoveryJobId(event.target.value)}
+            >
+              <option value="">Find only; I will shortlist later</option>
+              {discoveryJobs.map((job) => (
+                <option key={job.id} value={job.id}>
+                  {job.title}
+                </option>
+              ))}
+            </select>
           </label>
           <label>
-            Recent activity or hiring signal
-            <textarea
-              value={activity}
-              onChange={(event) => setActivity(event.target.value)}
-              placeholder="Posted about hiring product managers this week"
-            />
+            People to find
+            <select
+              value={discoveryLimit}
+              onChange={(event) => setDiscoveryLimit(event.target.value)}
+            >
+              <option value="5">5 people</option>
+              <option value="10">10 people</option>
+            </select>
           </label>
-          <label>
-            Mutual connections
-            <input
-              type="number"
-              min="0"
-              value={mutuals}
-              onChange={(event) => setMutuals(event.target.value)}
-            />
-          </label>
-          <button className="button button--dark" disabled={busy === "add-person"}>
-            {busy === "add-person" ? "Adding…" : "Add person"}
+          <button
+            className="button button--primary"
+            disabled={
+              busy === "discover-people" || !integrations?.ready_for_contact_discovery
+            }
+          >
+            {busy === "discover-people" ? "Searching LinkedIn…" : "Find recruiters and managers"}
           </button>
+          {!integrations?.ready_for_contact_discovery && (
+            <p className="helper">ConnectSafely and its LinkedIn account must be ready first.</p>
+          )}
+
+          <details className="manual-entry">
+            <summary>Add a known person manually</summary>
+            <div className="form-stack manual-entry__body">
+              <label>
+                Company
+                <select
+                  value={companyId}
+                  onChange={(event) => setCompanyId(event.target.value)}
+                >
+                  <option value="">Select company</option>
+                  {watchlist.map((company) => (
+                    <option key={company.id} value={company.id}>
+                      {company.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <div className="form-pair">
+                <label>
+                  Name
+                  <input
+                    value={personName}
+                    onChange={(event) => setPersonName(event.target.value)}
+                    placeholder="Priya Sharma"
+                  />
+                </label>
+                <label>
+                  Designation
+                  <input
+                    value={designation}
+                    onChange={(event) => setDesignation(event.target.value)}
+                    placeholder="Talent Partner"
+                  />
+                </label>
+              </div>
+              <label>
+                LinkedIn profile
+                <input
+                  type="url"
+                  value={linkedinUrl}
+                  onChange={(event) => setLinkedinUrl(event.target.value)}
+                  placeholder="https://www.linkedin.com/in/…"
+                />
+              </label>
+              <label>
+                Recent activity or hiring signal
+                <textarea
+                  value={activity}
+                  onChange={(event) => setActivity(event.target.value)}
+                />
+              </label>
+              <label>
+                Mutual connections
+                <input
+                  type="number"
+                  min="0"
+                  value={mutuals}
+                  onChange={(event) => setMutuals(event.target.value)}
+                />
+              </label>
+              <button
+                type="button"
+                className="button button--secondary"
+                disabled={
+                  busy === "add-person" || !companyId || !personName || !linkedinUrl
+                }
+                onClick={() => void addPerson()}
+              >
+                Add person
+              </button>
+            </div>
+          </details>
         </form>
 
         <div className="panel">
@@ -274,16 +404,21 @@ export function PeopleOutreachWorkspace({
               return (
                 <article className="person-card" key={person.id}>
                   <div>
-                    <p>{company?.name ?? "Company"}</p>
+                    <p>
+                      {company?.name ?? "Company"} · {person.source}
+                    </p>
                     <h4>{person.name}</h4>
                     <span>{person.designation ?? "Designation pending"}</span>
                   </div>
                   <strong>{person.reply_probability ?? 0}%</strong>
-                  <a href={person.linkedin_url} target="_blank" rel="noreferrer">
-                    View profile ↗
-                  </a>
+                  {person.linkedin_url && (
+                    <a href={person.linkedin_url} target="_blank" rel="noreferrer">
+                      View profile ↗
+                    </a>
+                  )}
                   {person.is_shortlisted ? (
                     <button
+                      type="button"
                       className="button button--secondary"
                       onClick={() =>
                         runAction(`unshortlist-${person.id}`, () =>
@@ -302,9 +437,7 @@ export function PeopleOutreachWorkspace({
                           const jobId = Number(event.target.value);
                           if (!jobId) return;
                           void runAction(`shortlist-${person.id}`, () =>
-                            api
-                              .shortlistRecruiter(person.id, jobId)
-                              .then(() => undefined),
+                            api.shortlistRecruiter(person.id, jobId).then(() => undefined),
                           );
                         }}
                       >
@@ -323,7 +456,7 @@ export function PeopleOutreachWorkspace({
             {people.length === 0 && (
               <div className="empty-state">
                 <strong>No people stored yet.</strong>
-                <p>Add a recruiter, hiring manager, or founder from a target company.</p>
+                <p>Select a company and let ConnectSafely search LinkedIn.</p>
               </div>
             )}
           </div>
@@ -333,10 +466,10 @@ export function PeopleOutreachWorkspace({
       <div className="workflow__heading workflow__heading--spaced" id="outreach">
         <div>
           <p className="eyebrow">Approval-first outreach</p>
-          <h2>Generate, review, approve and track every message.</h2>
+          <h2>Gemini drafts. You approve. ConnectSafely sends.</h2>
         </div>
         <span>
-          {capabilities?.sent_today ?? 0}/{capabilities?.daily_limit ?? 10} sent today
+          {capabilities?.sent_today ?? 0}/{capabilities?.daily_limit ?? 100} sent today
         </span>
       </div>
 
@@ -371,8 +504,8 @@ export function PeopleOutreachWorkspace({
 
         <form className="panel form-stack" onSubmit={generateMessage}>
           <div className="panel__heading">
-            <h3>2. Generate message</h3>
-            <span>No templates</span>
+            <h3>2. Generate DM</h3>
+            <span>Gemini · no templates</span>
           </div>
           <label>
             Shortlisted person
@@ -417,40 +550,38 @@ export function PeopleOutreachWorkspace({
           </label>
           <button
             className="button button--primary"
-            disabled={busy === "generate" || !profile}
+            disabled={
+              busy === "generate" || !profile || !integrations?.gemini_configured
+            }
           >
             {busy === "generate" ? "Writing…" : "Generate unique draft"}
           </button>
-          {!profile && <p className="helper">Save the Rahul profile first.</p>}
         </form>
 
         <div className="panel delivery-panel">
           <div className="panel__heading">
             <h3>3. Delivery controls</h3>
-            <span>{capabilities?.mode ?? "MANUAL"}</span>
+            <span>{capabilities?.mode ?? "CONNECTSAFELY"}</span>
           </div>
           <strong>
             {capabilities?.automatic_linkedin_send
-              ? "Automatic delivery enabled"
-              : "Approved handoff enabled"}
+              ? "Approved LinkedIn sending enabled"
+              : "LinkedIn delivery is not connected"}
           </strong>
-          <p>
-            {capabilities?.reason ??
-              "Approved messages will use the configured LinkedIn partner integration."}
-          </p>
+          <p>{capabilities?.reason}</p>
           <div className="limit-meter">
             <span
               style={{
                 width: `${Math.min(
                   ((capabilities?.sent_today ?? 0) /
-                    (capabilities?.daily_limit ?? 10)) *
+                    (capabilities?.daily_limit ?? 100)) *
                     100,
                   100,
                 )}%`,
               }}
             />
           </div>
-          <small>Daily cap protects outreach quality and keeps a clear audit trail.</small>
+          <small>Hard local cap: 100 approved sends per day.</small>
         </div>
       </div>
 
@@ -469,9 +600,22 @@ export function PeopleOutreachWorkspace({
               </span>
             </div>
             <label>
-              Personalized message preview
+              InMail subject
+              <input
+                value={subjectFor(message)}
+                onChange={(event) =>
+                  setDraftSubjects((current) => ({
+                    ...current,
+                    [message.id]: event.target.value,
+                  }))
+                }
+                disabled={message.status !== "DRAFT"}
+              />
+            </label>
+            <label>
+              Personalized LinkedIn message
               <textarea
-                value={draftBodies[message.id] ?? message.body}
+                value={bodyFor(message)}
                 onChange={(event) =>
                   setDraftBodies((current) => ({
                     ...current,
@@ -482,18 +626,19 @@ export function PeopleOutreachWorkspace({
               />
             </label>
             {message.rationale && <p className="message-rationale">{message.rationale}</p>}
+            {message.delivery_error && (
+              <p className="workflow-notice workflow-notice--error">{message.delivery_error}</p>
+            )}
             <div className="message-actions">
               {message.status === "DRAFT" && (
                 <>
                   <button
+                    type="button"
                     className="button button--secondary"
                     onClick={() =>
                       runAction(`save-${message.id}`, () =>
                         api
-                          .editOutreach(
-                            message.id,
-                            draftBodies[message.id] ?? message.body,
-                          )
+                          .editOutreach(message.id, subjectFor(message), bodyFor(message))
                           .then(() => undefined),
                       )
                     }
@@ -501,15 +646,17 @@ export function PeopleOutreachWorkspace({
                     Save edit
                   </button>
                   <button
+                    type="button"
                     className="button button--primary"
                     onClick={() =>
                       runAction(`approve-${message.id}`, async () => {
                         await api.editOutreach(
                           message.id,
-                          draftBodies[message.id] ?? message.body,
+                          subjectFor(message),
+                          bodyFor(message),
                         );
                         await api.approveOutreach(message.id);
-                        setNotice("Message approved and ready for delivery.");
+                        setNotice("DM approved. It has not been sent yet.");
                       })
                     }
                   >
@@ -518,40 +665,27 @@ export function PeopleOutreachWorkspace({
                 </>
               )}
               {message.status === "APPROVED" && (
-                <>
-                  {capabilities?.automatic_linkedin_send ? (
-                    <button
-                      className="button button--primary"
-                      onClick={() =>
-                        runAction(`send-${message.id}`, () =>
-                          api.autoSendOutreach(message.id).then(() => undefined),
-                        )
-                      }
-                    >
-                      Send approved DM
-                    </button>
-                  ) : (
-                    <button
-                      className="button button--primary"
-                      onClick={() => copyAndOpen(message)}
-                    >
-                      Copy + open LinkedIn
-                    </button>
-                  )}
-                  <button
-                    className="button button--secondary"
-                    onClick={() =>
-                      runAction(`sent-${message.id}`, () =>
-                        api.markOutreachSent(message.id).then(() => undefined),
-                      )
-                    }
-                  >
-                    Mark sent
-                  </button>
-                </>
+                <button
+                  type="button"
+                  className="button button--primary"
+                  disabled={
+                    busy === `send-${message.id}` ||
+                    !capabilities?.automatic_linkedin_send
+                  }
+                  onClick={() =>
+                    runAction(`send-${message.id}`, async () => {
+                      await api.autoSendOutreach(message.id);
+                      setNotice("LinkedIn DM sent through ConnectSafely.");
+                    })
+                  }
+                >
+                  {busy === `send-${message.id}` ? "Sending…" : "Send approved LinkedIn DM"}
+                </button>
               )}
+              {message.status === "SENDING" && <span>Delivery in progress…</span>}
               {message.status === "SENT" && (
                 <button
+                  type="button"
                   className="button button--secondary"
                   onClick={() =>
                     runAction(`reply-${message.id}`, () =>
@@ -567,8 +701,8 @@ export function PeopleOutreachWorkspace({
         ))}
         {messages.length === 0 && (
           <div className="empty-state">
-            <strong>No message drafts yet.</strong>
-            <p>Shortlist a person, save your profile, then generate the first unique message.</p>
+            <strong>No DM drafts yet.</strong>
+            <p>Find a person, shortlist them, save your profile, then generate a draft.</p>
           </div>
         )}
       </div>

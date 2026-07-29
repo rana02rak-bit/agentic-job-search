@@ -87,7 +87,11 @@ export interface Recruiter {
   id: number;
   company_id: number;
   name: string;
-  linkedin_url: string;
+  email: string | null;
+  email_status: string | null;
+  linkedin_url: string | null;
+  source: string;
+  external_id: string | null;
   designation: string | null;
   activity: string | null;
   mutuals: number;
@@ -109,11 +113,15 @@ export interface OutreachMessage {
   id: number;
   recruiter_id: number;
   job_id: number;
+  subject: string | null;
+  recipient_email: string | null;
   body: string;
   rationale: string | null;
-  status: "DRAFT" | "APPROVED" | "SENT" | "REPLIED" | "REJECTED";
+  status: "DRAFT" | "APPROVED" | "SENDING" | "SENT" | "REPLIED" | "REJECTED";
   delivery_mode: string;
   delivery_error: string | null;
+  provider_message_id: string | null;
+  provider_thread_id: string | null;
   generated_at: string;
   approved_at: string | null;
   sent_at: string | null;
@@ -125,9 +133,30 @@ export interface OutreachMessage {
 export interface DeliveryCapabilities {
   automatic_linkedin_send: boolean;
   mode: string;
+  connectsafely_configured: boolean;
+  account_connected: boolean;
+  account_name: string | null;
   daily_limit: number;
   sent_today: number;
   reason: string | null;
+}
+
+export interface IntegrationStatus {
+  gemini_configured: boolean;
+  connectsafely_configured: boolean;
+  connectsafely_account_connected: boolean;
+  connectsafely_account_name: string | null;
+  ready_for_contact_discovery: boolean;
+  ready_for_linkedin_sending: boolean;
+  missing: string[];
+}
+
+export interface ContactDiscoveryResult {
+  company_id: number;
+  discovered: number;
+  stored: number;
+  skipped_duplicates: number;
+  people: Recruiter[];
 }
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
@@ -204,12 +233,22 @@ export const api = {
   addRecruiter: (payload: {
     company_id: number;
     name: string;
-    linkedin_url: string;
+    email?: string;
+    linkedin_url?: string;
     designation?: string;
     activity?: string;
     mutuals?: number;
   }) =>
     request<Recruiter>("/api/recruiters", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  discoverRecruiters: (payload: {
+    company_id: number;
+    job_id?: number;
+    limit: number;
+  }) =>
+    request<ContactDiscoveryResult>("/api/recruiters/discover", {
       method: "POST",
       body: JSON.stringify(payload),
     }),
@@ -231,6 +270,8 @@ export const api = {
   outreachMessages: () => request<OutreachMessage[]>("/api/outreach/messages"),
   outreachCapabilities: () =>
     request<DeliveryCapabilities>("/api/outreach/capabilities"),
+  integrationStatus: () =>
+    request<IntegrationStatus>("/api/integrations/status"),
   generateOutreach: (payload: {
     recruiter_id: number;
     job_id: number;
@@ -240,13 +281,17 @@ export const api = {
       method: "POST",
       body: JSON.stringify(payload),
     }),
-  editOutreach: (id: number, body: string) =>
+  editOutreach: (id: number, subject: string, body: string) =>
     request<OutreachMessage>(`/api/outreach/messages/${id}`, {
       method: "PATCH",
-      body: JSON.stringify({ body }),
+      body: JSON.stringify({ subject, body }),
     }),
   approveOutreach: (id: number) =>
-    request<{ message: OutreachMessage; linkedin_url: string; automatic_send_available: boolean }>(
+    request<{
+      message: OutreachMessage;
+      linkedin_url: string;
+      automatic_send_available: boolean;
+    }>(
       `/api/outreach/messages/${id}/approve`,
       { method: "POST" },
     ),

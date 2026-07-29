@@ -1,4 +1,6 @@
+from app.core.config import Settings
 from app.schemas import CompanySuggestion, SuggestionBatch
+from app.services.connectsafely import ConnectSafelyAccount, DiscoveredContact
 from app.services.message_generator import GeneratedOutreach
 from tests.test_api import client
 
@@ -60,6 +62,7 @@ def test_recruiter_shortlist_and_outreach_lifecycle(monkeypatch) -> None:
     monkeypatch.setattr(
         "app.api.outreach.generate_outreach_message",
         lambda *_args: GeneratedOutreach(
+            subject="Senior PM, AI at Outreach Test Company",
             body=(
                 "Hi Priya, I noticed your team is hiring a Senior Product Manager for AI. "
                 "At Ola Electric, I have led AI-agent and procurement transformation work with "
@@ -76,20 +79,33 @@ def test_recruiter_shortlist_and_outreach_lifecycle(monkeypatch) -> None:
     assert message_response.status_code == 201
     message = message_response.json()
     assert message["status"] == "DRAFT"
+    assert message["subject"] == "Senior PM, AI at Outreach Test Company"
     assert message["recruiter"]["name"] == "Priya Sharma"
+
+    settings = Settings(connectsafely_api_key="test-connectsafely-key")
+    monkeypatch.setattr("app.api.outreach.get_settings", lambda: settings)
+    monkeypatch.setattr(
+        "app.api.outreach.get_account_status",
+        lambda *_args: ConnectSafelyAccount(
+            connected=True,
+            name="Rahul",
+            account_id="account-test",
+        ),
+    )
+    monkeypatch.setattr(
+        "app.api.outreach.send_linkedin_message",
+        lambda *_args: ("message-123", "conversation-123"),
+    )
 
     approve_response = client.post(f"/api/outreach/messages/{message['id']}/approve")
     assert approve_response.status_code == 200
     assert approve_response.json()["message"]["status"] == "APPROVED"
-    assert approve_response.json()["automatic_send_available"] is False
+    assert approve_response.json()["automatic_send_available"] is True
 
-    blocked_send = client.post(f"/api/outreach/messages/{message['id']}/send")
-    assert blocked_send.status_code == 409
-    assert "partner API" in blocked_send.json()["detail"]
-
-    sent_response = client.post(f"/api/outreach/messages/{message['id']}/mark-sent")
+    sent_response = client.post(f"/api/outreach/messages/{message['id']}/send")
     assert sent_response.status_code == 200
     assert sent_response.json()["status"] == "SENT"
+    assert sent_response.json()["provider_message_id"] == "message-123"
 
     replied_response = client.post(f"/api/outreach/messages/{message['id']}/mark-replied")
     assert replied_response.status_code == 200
@@ -111,6 +127,45 @@ def test_recruiter_requires_linkedin_profile_url() -> None:
         },
     )
     assert response.status_code == 422
+
+
+def test_connectsafely_discovers_and_shortlists_people(monkeypatch) -> None:
+    company = client.post(
+        "/api/companies",
+        json={"name": "People Discovery Company", "priority": "HIGH"},
+    ).json()
+    job = client.post(
+        "/api/jobs",
+        json={
+            "company_id": company["id"],
+            "title": "Product Manager",
+            "location": "Bangalore",
+            "url": "https://example.com/jobs/people-discovery-pm",
+            "source": "TEST",
+        },
+    ).json()
+    monkeypatch.setattr(
+        "app.api.recruiters.discover_contacts",
+        lambda *_args: [
+            DiscoveredContact(
+                external_id="urn:li:profile:test-person",
+                name="Asha Rao",
+                linkedin_url="https://www.linkedin.com/in/asha-discovery-test",
+                designation="Talent Partner",
+                activity="Discovered in test",
+                mutuals=1,
+            )
+        ],
+    )
+    response = client.post(
+        "/api/recruiters/discover",
+        json={"company_id": company["id"], "job_id": job["id"], "limit": 5},
+    )
+    assert response.status_code == 200
+    result = response.json()
+    assert result["stored"] == 1
+    assert result["people"][0]["source"] == "CONNECTSAFELY"
+    assert result["people"][0]["is_shortlisted"] is True
 
 
 def test_ai_discovery_can_auto_pick_high_scoring_firms(monkeypatch) -> None:

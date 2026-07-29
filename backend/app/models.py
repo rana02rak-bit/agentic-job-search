@@ -38,6 +38,7 @@ class AtsProvider(StrEnum):
 class OutreachStatus(StrEnum):
     DRAFT = "DRAFT"
     APPROVED = "APPROVED"
+    SENDING = "SENDING"
     SENT = "SENT"
     REPLIED = "REPLIED"
     REJECTED = "REJECTED"
@@ -158,12 +159,17 @@ class Recruiter(Base):
     __tablename__ = "recruiters"
     __table_args__ = (
         UniqueConstraint("company_id", "linkedin_url", name="uq_recruiter_company_linkedin"),
+        UniqueConstraint("company_id", "email", name="uq_recruiter_company_email"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     company_id: Mapped[int] = mapped_column(ForeignKey("companies.id", ondelete="CASCADE"))
     name: Mapped[str] = mapped_column(String(160))
-    linkedin_url: Mapped[str] = mapped_column(String(1000))
+    linkedin_url: Mapped[str | None] = mapped_column(String(1000))
+    email: Mapped[str | None] = mapped_column(String(320), index=True)
+    email_status: Mapped[str | None] = mapped_column(String(32))
+    source: Mapped[str] = mapped_column(String(32), default="MANUAL", index=True)
+    external_id: Mapped[str | None] = mapped_column(String(160), index=True)
     designation: Mapped[str | None] = mapped_column(String(240))
     activity: Mapped[str | None] = mapped_column(Text)
     mutuals: Mapped[int] = mapped_column(Integer, default=0)
@@ -223,13 +229,17 @@ class OutreachMessage(Base):
         ForeignKey("recruiters.id", ondelete="CASCADE"), index=True
     )
     job_id: Mapped[int] = mapped_column(ForeignKey("jobs.id", ondelete="CASCADE"), index=True)
+    subject: Mapped[str | None] = mapped_column(String(240))
+    recipient_email: Mapped[str | None] = mapped_column(String(320), index=True)
     body: Mapped[str] = mapped_column(Text)
     rationale: Mapped[str | None] = mapped_column(Text)
     status: Mapped[str] = mapped_column(
         String(32), default=OutreachStatus.DRAFT.value, index=True
     )
-    delivery_mode: Mapped[str] = mapped_column(String(32), default="MANUAL")
+    delivery_mode: Mapped[str] = mapped_column(String(32), default="CONNECTSAFELY")
     delivery_error: Mapped[str | None] = mapped_column(Text)
+    provider_message_id: Mapped[str | None] = mapped_column(String(500), index=True)
+    provider_thread_id: Mapped[str | None] = mapped_column(String(500), index=True)
     generated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
