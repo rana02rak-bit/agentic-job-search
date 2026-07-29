@@ -101,12 +101,25 @@ def get_account_status(settings: Settings) -> ConnectSafelyAccount:
         or ""
     ).casefold()
     explicitly_connected = data.get("connected")
-    connected = (
-        bool(explicitly_connected)
-        if explicitly_connected is not None
-        else status in {"connected", "active", "ready", "ok", "healthy"}
-    )
-    if not status and data.get("success") is True:
+    enabled = data.get("enabled")
+    has_tokens = data.get("hasTokens")
+    connected_statuses = {
+        "available",
+        "in_use",
+        "warmup",
+        "connected",
+        "active",
+        "ready",
+        "ok",
+        "healthy",
+    }
+    if explicitly_connected is not None:
+        connected = bool(explicitly_connected)
+    else:
+        connected = status in connected_statuses
+    if enabled is False or has_tokens is False or status == "error":
+        connected = False
+    elif not status and (data.get("success") is True or (enabled and has_tokens)):
         connected = True
     name = (
         data.get("name")
@@ -114,6 +127,12 @@ def get_account_status(settings: Settings) -> ConnectSafelyAccount:
         or data.get("profileName")
         or data.get("publicIdentifier")
     )
+    if not name:
+        name = " ".join(
+            part
+            for part in (data.get("firstName"), data.get("lastName"))
+            if isinstance(part, str) and part.strip()
+        ).strip()
     account_id = data.get("accountId") or data.get("id")
     return ConnectSafelyAccount(
         connected=connected,

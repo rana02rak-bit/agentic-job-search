@@ -23,9 +23,12 @@ def test_account_status_parses_connected_account(monkeypatch) -> None:
         lambda *_args, **_kwargs: response(
             {
                 "data": {
-                    "status": "active",
-                    "name": "Rahul Ranjan",
-                    "accountId": "acc-1",
+                    "id": "acc-1",
+                    "firstName": "Rahul",
+                    "lastName": "Ranjan",
+                    "status": "AVAILABLE",
+                    "enabled": True,
+                    "hasTokens": True,
                 }
             }
         ),
@@ -34,6 +37,22 @@ def test_account_status_parses_connected_account(monkeypatch) -> None:
     assert account.connected is True
     assert account.name == "Rahul Ranjan"
     assert account.account_id == "acc-1"
+
+
+def test_account_status_rejects_expired_linkedin_tokens(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.services.connectsafely.httpx.request",
+        lambda *_args, **_kwargs: response(
+            {
+                "id": "acc-1",
+                "status": "AVAILABLE",
+                "enabled": True,
+                "hasTokens": False,
+            }
+        ),
+    )
+    account = get_account_status(Settings(connectsafely_api_key="test-key"))
+    assert account.connected is False
 
 
 def test_people_search_maps_linkedin_results(monkeypatch) -> None:
