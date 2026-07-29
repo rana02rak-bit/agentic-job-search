@@ -27,6 +27,8 @@ while IFS= read -r line || [[ -n "${line}" ]]; do
       printf "CONNECTSAFELY_API_KEY=%s\n" "${connectsafely_key}" >> "${temp_file}"
       connectsafely_written=1
       ;;
+    OPENAI_API_KEY=*|OPENAI_MODEL=*|LINKEDIN_SEND_MODE=*)
+      ;;
     *)
       printf "%s\n" "${line}" >> "${temp_file}"
       ;;
