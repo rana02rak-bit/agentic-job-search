@@ -656,11 +656,20 @@ export function PeopleOutreachWorkspace({
                           bodyFor(message),
                         );
                         await api.approveOutreach(message.id);
-                        setNotice("DM approved. It has not been sent yet.");
+                        if (capabilities?.automatic_linkedin_send) {
+                          await api.autoSendOutreach(message.id);
+                          setNotice("DM approved and sent through ConnectSafely.");
+                        } else {
+                          setNotice(
+                            "DM approved but not sent because ConnectSafely is not connected.",
+                          );
+                        }
                       })
                     }
                   >
-                    Approve
+                    {capabilities?.automatic_linkedin_send
+                      ? "Approve & send LinkedIn DM"
+                      : "Approve draft"}
                   </button>
                 </>
               )}
@@ -679,7 +688,9 @@ export function PeopleOutreachWorkspace({
                     })
                   }
                 >
-                  {busy === `send-${message.id}` ? "Sending…" : "Send approved LinkedIn DM"}
+                  {busy === `send-${message.id}`
+                    ? "Sending…"
+                    : "Retry approved LinkedIn DM"}
                 </button>
               )}
               {message.status === "SENDING" && <span>Delivery in progress…</span>}
