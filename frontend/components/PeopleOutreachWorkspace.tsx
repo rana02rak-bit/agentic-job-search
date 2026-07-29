@@ -58,6 +58,7 @@ export function PeopleOutreachWorkspace({
   );
   const [selectedPersonId, setSelectedPersonId] = useState("");
   const [selectedJobId, setSelectedJobId] = useState("");
+  const [shortlistJobIds, setShortlistJobIds] = useState<Record<number, string>>({});
   const [extraContext, setExtraContext] = useState("");
   const [draftSubjects, setDraftSubjects] = useState<Record<number, string>>({});
   const [draftBodies, setDraftBodies] = useState<Record<number, string>>({});
@@ -433,26 +434,47 @@ export function PeopleOutreachWorkspace({
                       Shortlisted ✓
                     </button>
                   ) : (
-                    <label className="shortlist-control">
-                      Job to discuss
-                      <select
-                        defaultValue=""
-                        onChange={(event) => {
-                          const jobId = Number(event.target.value);
-                          if (!jobId) return;
+                    <div className="shortlist-control">
+                      <label>
+                        Optional job
+                        <select
+                          value={shortlistJobIds[person.id] ?? ""}
+                          onChange={(event) =>
+                            setShortlistJobIds((current) => ({
+                              ...current,
+                              [person.id]: event.target.value,
+                            }))
+                          }
+                        >
+                          <option value="">No specific job</option>
+                          {companyJobs.map((job) => (
+                            <option key={job.id} value={job.id}>
+                              {job.title}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <button
+                        type="button"
+                        className="button button--primary"
+                        disabled={busy === `shortlist-${person.id}`}
+                        onClick={() => {
+                          const selectedJob = shortlistJobIds[person.id];
                           void runAction(`shortlist-${person.id}`, () =>
-                            api.shortlistRecruiter(person.id, jobId).then(() => undefined),
+                            api
+                              .shortlistRecruiter(
+                                person.id,
+                                selectedJob ? Number(selectedJob) : undefined,
+                              )
+                              .then(() => undefined),
                           );
                         }}
                       >
-                        <option value="">Shortlist for…</option>
-                        {companyJobs.map((job) => (
-                          <option key={job.id} value={job.id}>
-                            {job.title}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
+                        {busy === `shortlist-${person.id}`
+                          ? "Saving…"
+                          : "Shortlist person"}
+                      </button>
+                    </div>
                   )}
                 </article>
               );

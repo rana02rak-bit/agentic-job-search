@@ -894,6 +894,21 @@ aside {
   min-width: 150px;
 }
 
+.shortlist-control {
+  align-items: end;
+  display: flex;
+  gap: 0.5rem;
+}
+
+.shortlist-control label {
+  flex: 1;
+}
+
+.shortlist-control .button {
+  min-height: 42px;
+  white-space: nowrap;
+}
+
 .delivery-panel {
   background: var(--ink);
   color: white;
