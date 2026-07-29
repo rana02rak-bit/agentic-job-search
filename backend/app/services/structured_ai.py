@@ -99,34 +99,46 @@ def _generate_with_gemini[StructuredResult: BaseModel](
         raise StructuredAIUnavailable(
             "AI_PROVIDER is gemini but GEMINI_API_KEY is not configured."
         )
-    body = {
+    schema = response_type.model_json_schema()
+    body: dict = {
         "systemInstruction": {"parts": [{"text": system_prompt}]},
         "contents": [{"role": "user", "parts": [{"text": user_prompt}]}],
         "generationConfig": {
             "responseFormat": {
                 "text": {
                     "mimeType": "application/json",
-                    "schema": response_type.model_json_schema(),
+                    "schema": schema,
                 }
             },
         },
     }
+    legacy_body: dict = {
+        "systemInstruction": body["systemInstruction"],
+        "contents": body["contents"],
+        "generationConfig": {
+            "responseMimeType": "application/json",
+            "responseJsonSchema": schema,
+        },
+    }
+    url = (
+        "https://generativelanguage.googleapis.com/v1beta/models/"
+        f"{settings.gemini_model}:generateContent"
+    )
+    request_options = {
+        "headers": {"x-goog-api-key": settings.gemini_api_key},
+        "timeout": httpx.Timeout(60, connect=15),
+    }
     try:
-        response = httpx.post(
-            (
-                "https://generativelanguage.googleapis.com/v1beta/models/"
-                f"{settings.gemini_model}:generateContent"
-            ),
-            headers={"x-goog-api-key": settings.gemini_api_key},
-            json=body,
-            timeout=httpx.Timeout(60, connect=15),
-        )
+        response = httpx.post(url, json=body, **request_options)
+        if response.status_code == 400:
+            response = httpx.post(url, json=legacy_body, **request_options)
         response.raise_for_status()
         payload = response.json()
         text = payload["candidates"][0]["content"]["parts"][0]["text"]
         return response_type.model_validate_json(text)
     except httpx.HTTPStatusError as exc:
         status = exc.response.status_code
+        provider_detail = _gemini_error_detail(exc.response, settings.gemini_api_key)
         if status in {401, 403}:
             detail = (
                 "Gemini rejected the API key. Generate a fresh key in Google AI Studio "
@@ -139,9 +151,9 @@ def _generate_with_gemini[StructuredResult: BaseModel](
         elif status == 429:
             detail = "Gemini quota is exhausted or temporarily rate-limited."
         elif status == 400:
-            detail = "Gemini rejected the generated request."
+            detail = f"Gemini rejected the generated request: {provider_detail}"
         else:
-            detail = f"Gemini returned HTTP {status}."
+            detail = f"Gemini returned HTTP {status}: {provider_detail}"
         raise StructuredAIUnavailable(detail) from exc
     except httpx.ConnectError as exc:
         raise StructuredAIUnavailable(
@@ -158,3 +170,15 @@ def _generate_with_gemini[StructuredResult: BaseModel](
         raise StructuredAIUnavailable(
             "Gemini returned invalid structured output."
         ) from exc
+
+
+def _gemini_error_detail(response: httpx.Response, api_key: str) -> str:
+    try:
+        payload = response.json()
+        error = payload.get("error", {})
+        message = error.get("message") if isinstance(error, dict) else None
+    except (TypeError, ValueError):
+        message = None
+    if not isinstance(message, str) or not message.strip():
+        return f"HTTP {response.status_code}"
+    return message.replace(api_key, "[redacted]").strip()[:500]

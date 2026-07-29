@@ -1,3 +1,4 @@
+import httpx
 import pytest
 from pydantic import BaseModel
 
@@ -85,3 +86,41 @@ def test_gemini_uses_current_structured_output_format(monkeypatch) -> None:
     assert generation_config["responseFormat"]["text"]["mimeType"] == "application/json"
     assert generation_config["responseFormat"]["text"]["schema"]["type"] == "object"
     assert "responseJsonSchema" not in generation_config
+
+
+def test_gemini_retries_legacy_structured_output_on_bad_request(monkeypatch) -> None:
+    captured_bodies: list[dict] = []
+
+    def fake_post(url: str, **kwargs) -> httpx.Response:
+        captured_bodies.append(kwargs["json"])
+        request = httpx.Request("POST", url)
+        if len(captured_bodies) == 1:
+            return httpx.Response(
+                400,
+                json={"error": {"message": "Unknown structured output field"}},
+                request=request,
+            )
+        return httpx.Response(
+            200,
+            json={
+                "candidates": [
+                    {"content": {"parts": [{"text": '{"answer":"legacy works"}'}]}}
+                ]
+            },
+            request=request,
+        )
+
+    monkeypatch.setattr("app.services.structured_ai.httpx.post", fake_post)
+
+    result = generate_structured(
+        Settings(ai_provider="gemini", gemini_api_key="test-key"),
+        ExampleResult,
+        "System",
+        "User",
+    )
+
+    assert result.answer == "legacy works"
+    assert len(captured_bodies) == 2
+    legacy_config = captured_bodies[1]["generationConfig"]
+    assert legacy_config["responseMimeType"] == "application/json"
+    assert legacy_config["responseJsonSchema"]["type"] == "object"
