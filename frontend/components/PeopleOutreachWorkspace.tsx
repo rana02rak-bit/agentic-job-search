@@ -239,6 +239,17 @@ export function PeopleOutreachWorkspace({
     return draftBodies[message.id] ?? message.body;
   }
 
+  function deliveryNeedsVerification(message: OutreachMessage) {
+    const error = message.delivery_error?.toLowerCase() ?? "";
+    return (
+      message.status === "SENDING" ||
+      (message.status === "APPROVED" &&
+        (error.includes("did not confirm") ||
+          error.includes("before timeout") ||
+          error.includes("duplicate linkedin message")))
+    );
+  }
+
   return (
     <section className="workflow" aria-label="People and outreach workflow">
       {(error || notice) && (
@@ -738,8 +749,12 @@ export function PeopleOutreachWorkspace({
                         );
                         await api.approveOutreach(message.id);
                         if (capabilities?.automatic_linkedin_send) {
-                          await api.autoSendOutreach(message.id);
-                          setNotice("DM approved and sent through ConnectSafely.");
+                          const delivery = await api.autoSendOutreach(message.id);
+                          setNotice(
+                            delivery.status === "SENT"
+                              ? "DM approved and confirmed sent through ConnectSafely."
+                              : "DM submitted. Delivery confirmation is pending; it will not be resent.",
+                          );
                         } else {
                           setNotice(
                             "DM approved but not sent because ConnectSafely is not connected.",
@@ -754,7 +769,7 @@ export function PeopleOutreachWorkspace({
                   </button>
                 </>
               )}
-              {message.status === "APPROVED" && (
+              {message.status === "APPROVED" && !deliveryNeedsVerification(message) && (
                 <button
                   type="button"
                   className="button button--primary"
@@ -764,17 +779,41 @@ export function PeopleOutreachWorkspace({
                   }
                   onClick={() =>
                     runAction(`send-${message.id}`, async () => {
-                      await api.autoSendOutreach(message.id);
-                      setNotice("LinkedIn DM sent through ConnectSafely.");
+                      const delivery = await api.autoSendOutreach(message.id);
+                      setNotice(
+                        delivery.status === "SENT"
+                          ? "LinkedIn DM confirmed sent through ConnectSafely."
+                          : "DM submitted. Delivery confirmation is pending; it will not be resent.",
+                      );
                     })
                   }
                 >
                   {busy === `send-${message.id}`
                     ? "Sending…"
-                    : "Retry approved LinkedIn DM"}
+                    : "Send approved LinkedIn DM"}
                 </button>
               )}
-              {message.status === "SENDING" && <span>Delivery in progress…</span>}
+              {deliveryNeedsVerification(message) && (
+                <button
+                  type="button"
+                  className="button button--secondary"
+                  disabled={busy === `verify-${message.id}`}
+                  onClick={() =>
+                    runAction(`verify-${message.id}`, async () => {
+                      const delivery = await api.verifyOutreachDelivery(message.id);
+                      setNotice(
+                        delivery.status === "SENT"
+                          ? "LinkedIn delivery confirmed."
+                          : "Still awaiting confirmation. The app will not resend it.",
+                      );
+                    })
+                  }
+                >
+                  {busy === `verify-${message.id}`
+                    ? "Checking LinkedIn…"
+                    : "Verify delivery"}
+                </button>
+              )}
               {message.status === "SENT" && (
                 <button
                   type="button"

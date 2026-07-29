@@ -5,6 +5,7 @@ from app.core.config import Settings
 from app.models import Company, Job
 from app.services import connectsafely
 from app.services.connectsafely import (
+    ConnectSafelyDeliveryUnconfirmed,
     ConnectSafelyUnavailable,
     discover_contacts,
     get_account_status,
@@ -129,6 +130,38 @@ def test_people_search_maps_linkedin_results(monkeypatch) -> None:
     ]
 
 
+def test_people_search_recovers_complete_records_from_truncated_preview(
+    monkeypatch,
+) -> None:
+    truncated_preview = (
+        '{"success":true,"people":['
+        '{"profileUrn":"urn:li:fsd_profile:one","firstName":"Bishu",'
+        '"lastName":"Dey","headline":"Manager - Revenue & Growth @ Eloelo",'
+        '"profileUrl":"https://www.linkedin.com/in/bishu-dey/"},'
+        '{"profileUrn":"urn:li:fsd_profile:two","firstName":"Tamanna",'
+        '"lastName":"Tuli","headline":"Senior Product Manager | Building Eloelo",'
+        '"profileUrl":"https://www.linkedin.com/in/tamanna-tuli/"},'
+        '{"profileUrn":"urn:li:fsd_profile:incomplete","firstName":"Cut'
+    )
+    monkeypatch.setattr(
+        "app.services.connectsafely._transport_request",
+        lambda *_args, **_kwargs: response(
+            {"_truncated": True, "preview": truncated_preview}
+        ),
+    )
+
+    contacts = discover_contacts(
+        Settings(connectsafely_api_key="test-key"),
+        Company(name="Eloelo"),
+        None,
+        5,
+    )
+
+    assert [contact.name for contact in contacts] == ["Bishu Dey", "Tamanna Tuli"]
+    assert contacts[0].external_id == "urn:li:fsd_profile:one"
+    assert contacts[1].linkedin_url == "https://www.linkedin.com/in/tamanna-tuli"
+
+
 def test_people_search_uses_v1_when_v2_is_empty(monkeypatch) -> None:
     captured_urls: list[str] = []
 
@@ -207,9 +240,10 @@ def test_pocket_fm_uses_verified_company_id_without_company_lookup(monkeypatch) 
 
 
 def test_send_uses_current_conversations_endpoint(monkeypatch) -> None:
-    captured: dict = {}
+    captured: dict = {"urls": []}
 
     def fake_request(method: str, url: str, **kwargs) -> httpx.Response:
+        captured["urls"].append(url)
         captured.update(method=method, url=url, json=kwargs["json"])
         return response(
             {
@@ -226,12 +260,59 @@ def test_send_uses_current_conversations_endpoint(monkeypatch) -> None:
         "https://www.linkedin.com/in/asha-rao",
         "Hello Asha",
         "Product role",
+        "urn:li:fsd_profile:asha",
     )
     assert captured["method"] == "POST"
     assert captured["url"].endswith("/linkedin/conversations/send")
-    assert captured["json"]["recipientProfileId"] == "asha-rao"
+    assert captured["json"]["recipientProfileUrn"] == "urn:li:fsd_profile:asha"
+    assert captured["json"]["messagingChannel"] == "linkedin_inbox"
+    assert len(captured["urls"]) == 1
     assert message_id == "message-1"
     assert conversation_id == "urn:li:conversation:1"
+
+
+def test_send_timeout_is_confirmed_from_conversation_history(monkeypatch) -> None:
+    calls: list[tuple[str, str]] = []
+
+    def fake_request(method: str, url: str, **_kwargs) -> httpx.Response:
+        calls.append((method, url))
+        if url.endswith("/linkedin/conversations/send"):
+            raise TimeoutError("provider response stalled")
+        if "/linkedin/conversations/exists/" in url:
+            return response(
+                {
+                    "success": True,
+                    "hasConversation": True,
+                    "conversationUrn": "urn:li:conversation:confirmed",
+                    "profileUrn": "urn:li:fsd_profile:asha",
+                }
+            )
+        if url.endswith("/messages"):
+            return response(
+                {
+                    "success": True,
+                    "messages": [
+                        {
+                            "messageUrn": "urn:li:message:confirmed",
+                            "text": "Hello Asha",
+                        }
+                    ],
+                }
+            )
+        raise AssertionError(f"Unexpected URL: {url}")
+
+    monkeypatch.setattr("app.services.connectsafely._transport_request", fake_request)
+
+    message_id, conversation_id = send_linkedin_message(
+        Settings(connectsafely_api_key="test-key"),
+        "https://www.linkedin.com/in/asha-rao",
+        "Hello Asha",
+        recipient_profile_urn="urn:li:fsd_profile:asha",
+    )
+
+    assert message_id == "urn:li:message:confirmed"
+    assert conversation_id == "urn:li:conversation:confirmed"
+    assert sum(method == "POST" for method, _url in calls) == 1
 
 
 def test_connect_error_explains_corporate_tls_fix(monkeypatch) -> None:
@@ -304,21 +385,32 @@ def test_account_status_cache_avoids_duplicate_provider_calls(monkeypatch) -> No
     assert first == second
 
 
-def test_send_does_not_retry_read_timeout(monkeypatch) -> None:
-    calls = 0
+def test_unconfirmed_send_timeout_never_retries_post(monkeypatch) -> None:
+    post_calls = 0
 
-    def timeout_request(*_args, **_kwargs) -> httpx.Response:
-        nonlocal calls
-        calls += 1
-        raise TimeoutError("provider slow")
+    def timeout_request(method: str, url: str, **_kwargs) -> httpx.Response:
+        nonlocal post_calls
+        if method == "POST":
+            post_calls += 1
+            raise TimeoutError("provider slow")
+        if "/linkedin/conversations/exists/" in url:
+            return response(
+                {
+                    "success": True,
+                    "hasConversation": False,
+                    "conversationUrn": None,
+                }
+            )
+        raise AssertionError(f"Unexpected URL: {url}")
 
     monkeypatch.setattr("app.services.connectsafely._transport_request", timeout_request)
 
-    with pytest.raises(ConnectSafelyUnavailable):
+    with pytest.raises(ConnectSafelyDeliveryUnconfirmed):
         send_linkedin_message(
             Settings(connectsafely_api_key="test-key"),
             "https://www.linkedin.com/in/asha-rao",
             "Hello Asha",
+            recipient_profile_urn="urn:li:fsd_profile:asha",
         )
 
-    assert calls == 1
+    assert post_calls == 1

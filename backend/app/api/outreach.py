@@ -26,9 +26,11 @@ from app.schemas import (
     OutreachUpdate,
 )
 from app.services.connectsafely import (
+    ConnectSafelyDeliveryUnconfirmed,
     ConnectSafelyUnavailable,
     get_account_status,
     send_linkedin_message,
+    verify_linkedin_message,
 )
 from app.services.message_generator import (
     MessageGenerationUnavailable,
@@ -226,7 +228,14 @@ def send_message(message_id: int, db: DbSession) -> OutreachMessage:
             message.recruiter.linkedin_url,
             message.body,
             message.subject,
+            message.recruiter.external_id,
         )
+    except ConnectSafelyDeliveryUnconfirmed as exc:
+        message.status = OutreachStatus.SENDING.value
+        message.provider_thread_id = exc.conversation_urn
+        message.delivery_error = str(exc)
+        db.commit()
+        return load_message(db, message.id)
     except ConnectSafelyUnavailable as exc:
         message.status = OutreachStatus.APPROVED.value
         message.sent_at = None
@@ -238,6 +247,42 @@ def send_message(message_id: int, db: DbSession) -> OutreachMessage:
     message.provider_message_id = provider_message_id
     message.provider_thread_id = provider_thread_id
     message.delivery_error = None
+    db.commit()
+    return load_message(db, message.id)
+
+
+@router.post("/messages/{message_id}/verify", response_model=OutreachRead)
+def verify_message_delivery(message_id: int, db: DbSession) -> OutreachMessage:
+    message = load_message(db, message_id)
+    if message.status not in {
+        OutreachStatus.APPROVED.value,
+        OutreachStatus.SENDING.value,
+    }:
+        raise HTTPException(
+            status_code=409,
+            detail="Only an approved or confirmation-pending message can be verified",
+        )
+    if not message.recruiter.linkedin_url:
+        raise HTTPException(status_code=409, detail="Recipient LinkedIn profile is missing")
+    confirmed, provider_message_id, provider_thread_id = verify_linkedin_message(
+        get_settings(),
+        message.recruiter.linkedin_url,
+        message.body,
+        conversation_urn=message.provider_thread_id,
+    )
+    if confirmed:
+        message.status = OutreachStatus.SENT.value
+        message.provider_message_id = provider_message_id
+        message.provider_thread_id = provider_thread_id
+        message.sent_at = message.sent_at or datetime.now(UTC)
+        message.delivery_error = None
+    else:
+        message.status = OutreachStatus.SENDING.value
+        message.provider_thread_id = provider_thread_id
+        message.delivery_error = (
+            "Delivery is not confirmed yet. The message remains locked against resending; "
+            "use Verify delivery again after ConnectSafely finishes syncing."
+        )
     db.commit()
     return load_message(db, message.id)
 

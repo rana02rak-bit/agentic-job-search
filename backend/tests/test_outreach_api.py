@@ -2,6 +2,7 @@ from app.core.config import Settings
 from app.schemas import CompanySuggestion, SuggestionBatch
 from app.services.connectsafely import (
     ConnectSafelyAccount,
+    ConnectSafelyDeliveryUnconfirmed,
     ConnectSafelyUnavailable,
     DiscoveredContact,
 )
@@ -131,6 +132,88 @@ def test_recruiter_requires_linkedin_profile_url() -> None:
         },
     )
     assert response.status_code == 422
+
+
+def test_unconfirmed_send_is_locked_then_verified_without_resending(
+    monkeypatch,
+) -> None:
+    company = client.post(
+        "/api/companies",
+        json={"name": "Delivery Verification Company", "priority": "HIGH"},
+    ).json()
+    person = client.post(
+        "/api/recruiters",
+        json={
+            "company_id": company["id"],
+            "name": "Delivery Check Recruiter",
+            "linkedin_url": "https://www.linkedin.com/in/delivery-check-recruiter",
+            "designation": "Talent Partner",
+        },
+    ).json()
+    client.post(f"/api/recruiters/{person['id']}/shortlist", json={})
+    client.put(
+        "/api/outreach/profile",
+        json={
+            "name": "Rahul Ranjan",
+            "resume_text": (
+                "Rahul has led AI product and procurement transformation work at Ola Electric "
+                "with measurable cost reduction and Founder's Office exposure. His prior work "
+                "spans product and strategy roles across major consumer internet companies."
+            ),
+            "positioning": "AI Product and Strategy",
+        },
+    )
+    monkeypatch.setattr(
+        "app.api.outreach.generate_outreach_message",
+        lambda *_args: GeneratedOutreach(
+            subject="AI product conversation",
+            body=(
+                "Hi, I am exploring AI product opportunities and would value a brief "
+                "conversation about the team and where my Ola Electric experience may fit."
+            ),
+            rationale="Company-specific outreach without inventing a live role.",
+        ),
+    )
+    draft = client.post(
+        "/api/outreach/messages",
+        json={"recruiter_id": person["id"]},
+    ).json()
+    settings = Settings(
+        connectsafely_api_key="test-connectsafely-key",
+        connectsafely_account_id="account-test",
+    )
+    monkeypatch.setattr("app.api.outreach.get_settings", lambda: settings)
+    client.post(f"/api/outreach/messages/{draft['id']}/approve")
+    monkeypatch.setattr(
+        "app.api.outreach.send_linkedin_message",
+        lambda *_args: (_ for _ in ()).throw(
+            ConnectSafelyDeliveryUnconfirmed("urn:li:conversation:pending")
+        ),
+    )
+
+    pending_response = client.post(f"/api/outreach/messages/{draft['id']}/send")
+
+    assert pending_response.status_code == 200
+    pending = pending_response.json()
+    assert pending["status"] == "SENDING"
+    assert pending["provider_thread_id"] == "urn:li:conversation:pending"
+    assert "locked against resending" in pending["delivery_error"]
+
+    monkeypatch.setattr(
+        "app.api.outreach.verify_linkedin_message",
+        lambda *_args, **_kwargs: (
+            True,
+            "urn:li:message:confirmed",
+            "urn:li:conversation:pending",
+        ),
+    )
+    verified_response = client.post(f"/api/outreach/messages/{draft['id']}/verify")
+
+    assert verified_response.status_code == 200
+    verified = verified_response.json()
+    assert verified["status"] == "SENT"
+    assert verified["provider_message_id"] == "urn:li:message:confirmed"
+    assert verified["delivery_error"] is None
 
 
 def test_connectsafely_discovers_and_shortlists_people(monkeypatch) -> None:

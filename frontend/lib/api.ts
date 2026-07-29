@@ -304,6 +304,10 @@ export const api = {
     request<OutreachMessage>(`/api/outreach/messages/${id}/send`, {
       method: "POST",
     }),
+  verifyOutreachDelivery: (id: number) =>
+    request<OutreachMessage>(`/api/outreach/messages/${id}/verify`, {
+      method: "POST",
+    }),
   markOutreachSent: (id: number) =>
     request<OutreachMessage>(`/api/outreach/messages/${id}/mark-sent`, {
       method: "POST",

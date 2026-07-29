@@ -7,7 +7,7 @@ from threading import Lock
 from time import monotonic
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode, urlparse
+from urllib.parse import quote, urlencode, urlparse
 from urllib.request import HTTPSHandler, ProxyHandler, Request, build_opener
 
 from app.core.config import Settings
@@ -17,6 +17,19 @@ logger = logging.getLogger(__name__)
 
 
 class ConnectSafelyUnavailable(RuntimeError):
+    pass
+
+
+class ConnectSafelyDeliveryUnconfirmed(ConnectSafelyUnavailable):
+    def __init__(self, conversation_urn: str | None = None):
+        super().__init__(
+            "LinkedIn may have accepted this message, but ConnectSafely did not return "
+            "confirmation. The message is locked against resending until delivery is verified."
+        )
+        self.conversation_urn = conversation_urn
+
+
+class _ConnectSafelySendTimeout(ConnectSafelyUnavailable):
     pass
 
 
@@ -217,11 +230,7 @@ def _request(
             if attempt + 1 < attempts:
                 continue
             if prevent_duplicate_on_timeout:
-                raise ConnectSafelyUnavailable(
-                    "ConnectSafely did not confirm the response before timeout. "
-                    "The request was not retried to prevent a duplicate LinkedIn message; "
-                    "check the conversation before trying again."
-                ) from exc
+                raise _ConnectSafelySendTimeout from exc
             if not retry_on_read_timeout:
                 raise ConnectSafelyUnavailable(
                     f"ConnectSafely did not respond within {timeout:g} seconds. "
@@ -361,29 +370,63 @@ def get_account_status(settings: Settings) -> ConnectSafelyAccount:
         return account
 
 
-def _items(payload: dict[str, Any]) -> list[dict[str, Any]]:
-    candidates: list[Any] = [
-        payload.get("people"),
-        payload.get("items"),
-        payload.get("results"),
-    ]
+def _partial_preview_items(preview: str, key: str) -> list[dict[str, Any]]:
+    key_position = preview.find(f'"{key}"')
+    if key_position < 0:
+        return []
+    array_position = preview.find("[", key_position)
+    if array_position < 0:
+        return []
+    decoder = json_module.JSONDecoder()
+    items: list[dict[str, Any]] = []
+    position = array_position + 1
+    while position < len(preview):
+        while position < len(preview) and preview[position] in " \t\r\n,":
+            position += 1
+        if position >= len(preview) or preview[position] == "]":
+            break
+        try:
+            item, position = decoder.raw_decode(preview, position)
+        except json_module.JSONDecodeError:
+            break
+        if isinstance(item, dict):
+            items.append(item)
+    return items
+
+
+def _list_items(payload: dict[str, Any], *keys: str) -> list[dict[str, Any]]:
+    candidates: list[Any] = [payload.get(key) for key in keys]
     data = payload.get("data")
     if isinstance(data, list):
         candidates.append(data)
     elif isinstance(data, dict):
-        candidates.extend(
-            [
-                data.get("people"),
-                data.get("items"),
-                data.get("results"),
-                data.get("elements"),
-            ]
-        )
-    candidates.append(payload.get("elements"))
+        candidates.extend(data.get(key) for key in keys)
     for candidate in candidates:
         if isinstance(candidate, list):
             return [item for item in candidate if isinstance(item, dict)]
+
+    preview = payload.get("preview")
+    if isinstance(preview, str) and preview.strip():
+        try:
+            preview_payload = json_module.loads(preview)
+        except json_module.JSONDecodeError:
+            for key in keys:
+                items = _partial_preview_items(preview, key)
+                if items:
+                    logger.info(
+                        "Recovered %s complete %s records from truncated provider preview",
+                        len(items),
+                        key,
+                    )
+                    return items
+        else:
+            if isinstance(preview_payload, dict):
+                return _list_items(preview_payload, *keys)
     return []
+
+
+def _items(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    return _list_items(payload, "people", "items", "results", "elements")
 
 
 def _first_string(item: dict[str, Any], *keys: str) -> str | None:
@@ -609,29 +652,163 @@ def send_linkedin_message(
     linkedin_url: str,
     message: str,
     subject: str | None = None,
+    recipient_profile_urn: str | None = None,
 ) -> tuple[str | None, str | None]:
+    profile_slug = linkedin_profile_slug(linkedin_url)
+    supplied_profile_urn = (
+        recipient_profile_urn
+        if recipient_profile_urn and recipient_profile_urn.startswith("urn:li:")
+        else None
+    )
+    if supplied_profile_urn:
+        conversation_urn, resolved_profile_urn = None, supplied_profile_urn
+    else:
+        conversation_urn, resolved_profile_urn = _conversation_context(
+            settings,
+            profile_slug,
+        )
     body: dict[str, Any] = {
-        "recipientProfileId": linkedin_profile_slug(linkedin_url),
         "message": message,
-        "messagingChannel": "auto",
+        "messagingChannel": "linkedin_inbox",
         "attachments": [],
     }
+    preferred_profile_urn = supplied_profile_urn or resolved_profile_urn
+    if preferred_profile_urn:
+        body["recipientProfileUrn"] = preferred_profile_urn
+    else:
+        body["recipientProfileId"] = profile_slug
+    if conversation_urn:
+        body["conversationUrn"] = conversation_urn
     if settings.connectsafely_account_id:
         body["accountId"] = settings.connectsafely_account_id
     if subject:
         body["subject"] = subject
-    data = _payload_data(
-        _request(
+    try:
+        response_payload = _request(
             settings,
             "POST",
             "/linkedin/conversations/send",
             json=body,
             prevent_duplicate_on_timeout=True,
+            timeout=15,
         )
-    )
+    except _ConnectSafelySendTimeout:
+        confirmed, message_id, verified_conversation_urn = verify_linkedin_message(
+            settings,
+            linkedin_url,
+            message,
+            conversation_urn=conversation_urn,
+        )
+        if confirmed:
+            return message_id, verified_conversation_urn
+        raise ConnectSafelyDeliveryUnconfirmed(
+            verified_conversation_urn or conversation_urn
+        ) from None
+
+    data = _payload_data(response_payload)
+    sent_message = data.get("sentMessage")
+    sent_message = sent_message if isinstance(sent_message, dict) else {}
     message_id = data.get("messageId") or data.get("id")
-    conversation_id = data.get("conversationUrn") or data.get("conversationId")
+    message_id = (
+        message_id
+        or sent_message.get("messageId")
+        or sent_message.get("messageUrn")
+        or sent_message.get("backendMessageUrn")
+        or sent_message.get("id")
+    )
+    conversation_id = (
+        data.get("conversationUrn")
+        or data.get("conversationId")
+        or conversation_urn
+        or data.get("threadId")
+    )
     return (
         str(message_id) if message_id else None,
         str(conversation_id) if conversation_id else None,
     )
+
+
+def _conversation_context(
+    settings: Settings,
+    profile_slug: str,
+) -> tuple[str | None, str | None]:
+    params = (
+        {"accountId": settings.connectsafely_account_id}
+        if settings.connectsafely_account_id
+        else None
+    )
+    try:
+        data = _payload_data(
+            _request(
+                settings,
+                "GET",
+                f"/linkedin/conversations/exists/{quote(profile_slug, safe='')}",
+                params=params,
+                timeout=5,
+            )
+        )
+    except ConnectSafelyUnavailable as exc:
+        logger.warning(
+            "ConnectSafely conversation precheck unavailable profile=%s error=%s",
+            profile_slug,
+            exc,
+        )
+        return None, None
+    conversation_urn = data.get("conversationUrn")
+    profile_urn = data.get("profileUrn")
+    return (
+        str(conversation_urn) if conversation_urn else None,
+        str(profile_urn) if profile_urn else None,
+    )
+
+
+def verify_linkedin_message(
+    settings: Settings,
+    linkedin_url: str,
+    message: str,
+    *,
+    conversation_urn: str | None = None,
+) -> tuple[bool, str | None, str | None]:
+    profile_slug = linkedin_profile_slug(linkedin_url)
+    if not conversation_urn:
+        conversation_urn, _ = _conversation_context(settings, profile_slug)
+    if not conversation_urn:
+        return False, None, None
+
+    params = (
+        {"accountId": settings.connectsafely_account_id}
+        if settings.connectsafely_account_id
+        else None
+    )
+    try:
+        payload = _request(
+            settings,
+            "GET",
+            (
+                "/linkedin/conversations/"
+                f"{quote(conversation_urn, safe='')}/messages"
+            ),
+            params=params,
+            timeout=8,
+        )
+    except ConnectSafelyUnavailable as exc:
+        logger.warning(
+            "ConnectSafely delivery verification unavailable conversation=%s error=%s",
+            conversation_urn,
+            exc,
+        )
+        return False, None, conversation_urn
+
+    expected_text = " ".join(message.split())
+    for item in _list_items(payload, "messages", "items", "results"):
+        actual_text = _first_string(item, "text", "message", "body", "content")
+        if actual_text and " ".join(actual_text.split()) == expected_text:
+            message_id = _first_string(
+                item,
+                "messageId",
+                "messageUrn",
+                "backendMessageUrn",
+                "id",
+            )
+            return True, message_id, conversation_urn
+    return False, None, conversation_urn
