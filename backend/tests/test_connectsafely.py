@@ -91,9 +91,9 @@ def test_people_search_maps_linkedin_results(monkeypatch) -> None:
     assert contacts[0].name == "Asha Rao"
     assert contacts[0].linkedin_url == "https://www.linkedin.com/in/asha-rao"
     assert contacts[0].mutuals == 2
-    assert captured["body"]["keywords"] == ""
+    assert "Recruiter" in captured["body"]["keywords"]
     assert captured["body"]["filters"]["company"] == "Acme"
-    assert "Recruiter" in captured["body"]["filters"]["title"]
+    assert "title" not in captured["body"]["filters"]
     assert "locationId" not in captured["body"]["filters"]
 
 

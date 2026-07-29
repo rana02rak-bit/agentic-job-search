@@ -271,9 +271,8 @@ def discover_contacts(
     body: dict[str, Any] = {
         "count": limit,
         "start": 0,
-        "keywords": "",
+        "keywords": titles,
         "filters": {
-            "title": titles,
             "company": company.name,
         },
     }
