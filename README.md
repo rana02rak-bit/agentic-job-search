@@ -34,7 +34,8 @@ Any API key pasted into chat must be considered exposed. Regenerate the selected
 and the ConnectSafely key before using this app. Never commit `.env`.
 
 The app supports Gemini and OpenAI Platform keys. `AI_PROVIDER=auto` chooses Gemini first when both
-exist; the terminal configurator writes an explicit provider.
+exist; the terminal configurator writes an explicit provider. Gemini uses the current stable
+`gemini-3.6-flash` model; rerunning the configurator migrates older local model settings.
 
 ## Configure entirely from Terminal
 

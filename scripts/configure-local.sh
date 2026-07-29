@@ -18,6 +18,7 @@ fi
 
 gemini_key=""
 openai_key=""
+gemini_model="gemini-3.6-flash"
 if [[ "${ai_provider}" == "openai" ]]; then
   read -r -s -p "Fresh OpenAI Platform API key: " openai_key
 else
@@ -30,6 +31,7 @@ printf "\n"
 temp_file="$(mktemp)"
 provider_written=0
 gemini_written=0
+gemini_model_written=0
 openai_written=0
 connectsafely_written=0
 while IFS= read -r line || [[ -n "${line}" ]]; do
@@ -41,6 +43,10 @@ while IFS= read -r line || [[ -n "${line}" ]]; do
     GEMINI_API_KEY=*)
       printf "GEMINI_API_KEY=%s\n" "${gemini_key}" >> "${temp_file}"
       gemini_written=1
+      ;;
+    GEMINI_MODEL=*)
+      printf "GEMINI_MODEL=%s\n" "${gemini_model}" >> "${temp_file}"
+      gemini_model_written=1
       ;;
     OPENAI_API_KEY=*)
       printf "OPENAI_API_KEY=%s\n" "${openai_key}" >> "${temp_file}"
@@ -64,6 +70,9 @@ fi
 if [[ "${gemini_written}" -eq 0 ]]; then
   printf "GEMINI_API_KEY=%s\n" "${gemini_key}" >> "${temp_file}"
 fi
+if [[ "${gemini_model_written}" -eq 0 ]]; then
+  printf "GEMINI_MODEL=%s\n" "${gemini_model}" >> "${temp_file}"
+fi
 if [[ "${openai_written}" -eq 0 ]]; then
   printf "OPENAI_API_KEY=%s\n" "${openai_key}" >> "${temp_file}"
 fi
@@ -73,7 +82,7 @@ fi
 
 mv "${temp_file}" "${env_file}"
 chmod 600 "${env_file}"
-unset gemini_key openai_key connectsafely_key
+unset gemini_key gemini_model openai_key connectsafely_key
 
 printf "Saved secrets to %s with owner-only permissions.\n" "${env_file}"
 printf "Next: docker compose up --build\n"
