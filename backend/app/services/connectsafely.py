@@ -1,6 +1,10 @@
+import hashlib
 import json as json_module
+import logging
 import ssl
 from dataclasses import dataclass
+from threading import Lock
+from time import monotonic
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urlparse
@@ -8,6 +12,8 @@ from urllib.request import HTTPSHandler, ProxyHandler, Request, build_opener
 
 from app.core.config import Settings
 from app.models import Company, Job
+
+logger = logging.getLogger(__name__)
 
 
 class ConnectSafelyUnavailable(RuntimeError):
@@ -41,6 +47,16 @@ class _TransportResponse:
 
 
 _LINKEDIN_COMPANY_ID_CACHE: dict[tuple[str, str], str] = {}
+_ACCOUNT_STATUS_CACHE: dict[
+    tuple[str, str, str],
+    tuple[float, ConnectSafelyAccount],
+] = {}
+_ACCOUNT_STATUS_ERROR_CACHE: dict[tuple[str, str, str], tuple[float, str]] = {}
+_ACCOUNT_STATUS_LOCK = Lock()
+_ACCOUNT_STATUS_CACHE_TTL_SECONDS = 60
+_ACCOUNT_STATUS_STALE_TTL_SECONDS = 300
+_ACCOUNT_STATUS_ERROR_TTL_SECONDS = 15
+_MAX_RESPONSE_BYTES = 4 * 1024 * 1024
 
 
 def _headers(settings: Settings) -> dict[str, str]:
@@ -50,6 +66,8 @@ def _headers(settings: Settings) -> dict[str, str]:
         )
     return {
         "Authorization": f"Bearer {settings.connectsafely_api_key}",
+        "Accept": "application/json",
+        "Connection": "close",
         "Content-Type": "application/json",
     }
 
@@ -97,6 +115,23 @@ def _connection_error_message(exc: ConnectionError) -> str:
     )
 
 
+def _read_json_response(response: Any) -> bytes:
+    """Stop once a complete JSON document arrives, even if the server keeps the socket open."""
+    content = bytearray()
+    read_chunk = getattr(response, "read1", response.read)
+    while len(content) < _MAX_RESPONSE_BYTES:
+        chunk = read_chunk(min(64 * 1024, _MAX_RESPONSE_BYTES - len(content)))
+        if not chunk:
+            break
+        content.extend(chunk)
+        try:
+            json_module.loads(content)
+        except (UnicodeDecodeError, json_module.JSONDecodeError):
+            continue
+        return bytes(content)
+    return bytes(content)
+
+
 def _transport_request(
     method: str,
     url: str,
@@ -124,10 +159,13 @@ def _transport_request(
         with opener.open(request, timeout=timeout) as response:
             return _TransportResponse(
                 status_code=response.status,
-                content=response.read(),
+                content=_read_json_response(response),
             )
     except HTTPError as exc:
-        return _TransportResponse(status_code=exc.code, content=exc.read())
+        return _TransportResponse(
+            status_code=exc.code,
+            content=_read_json_response(exc),
+        )
     except TimeoutError as exc:
         raise TimeoutError(str(exc)) from exc
     except URLError as exc:
@@ -147,6 +185,7 @@ def _request(
     params: dict[str, Any] | None = None,
     retry_on_read_timeout: bool = False,
     prevent_duplicate_on_timeout: bool = False,
+    timeout: float = 30,
 ) -> dict[str, Any]:
     attempts = 2 if retry_on_read_timeout else 1
     for attempt in range(attempts):
@@ -158,10 +197,17 @@ def _request(
                 headers=_headers(settings),
                 json=json,
                 params=params,
-                timeout=30,
+                timeout=timeout,
             )
             break
         except TimeoutError as exc:
+            logger.warning(
+                "ConnectSafely timeout method=%s path=%s attempt=%s/%s",
+                method,
+                path,
+                attempt + 1,
+                attempts,
+            )
             if attempt + 1 < attempts:
                 continue
             if prevent_duplicate_on_timeout:
@@ -172,7 +218,7 @@ def _request(
                 ) from exc
             if not retry_on_read_timeout:
                 raise ConnectSafelyUnavailable(
-                    "ConnectSafely did not respond within 30 seconds. "
+                    f"ConnectSafely did not respond within {timeout:g} seconds. "
                     "The provider is temporarily slow or unavailable."
                 ) from exc
             raise ConnectSafelyUnavailable(
@@ -205,7 +251,18 @@ def _payload_data(payload: dict[str, Any]) -> dict[str, Any]:
     return data if isinstance(data, dict) else payload
 
 
-def get_account_status(settings: Settings) -> ConnectSafelyAccount:
+def _account_status_cache_key(settings: Settings) -> tuple[str, str, str]:
+    key_fingerprint = hashlib.sha256(
+        (settings.connectsafely_api_key or "").encode("utf-8")
+    ).hexdigest()
+    return (
+        settings.connectsafely_base_url.rstrip("/"),
+        settings.connectsafely_account_id or "",
+        key_fingerprint,
+    )
+
+
+def _fetch_account_status(settings: Settings) -> ConnectSafelyAccount:
     params = (
         {"accountId": settings.connectsafely_account_id}
         if settings.connectsafely_account_id
@@ -217,7 +274,7 @@ def get_account_status(settings: Settings) -> ConnectSafelyAccount:
             "GET",
             "/linkedin/account/status",
             params=params,
-            retry_on_read_timeout=True,
+            timeout=8,
         )
     )
     status = str(
@@ -265,6 +322,37 @@ def get_account_status(settings: Settings) -> ConnectSafelyAccount:
         name=str(name) if name else None,
         account_id=str(account_id) if account_id else settings.connectsafely_account_id,
     )
+
+
+def get_account_status(settings: Settings) -> ConnectSafelyAccount:
+    cache_key = _account_status_cache_key(settings)
+    cached = _ACCOUNT_STATUS_CACHE.get(cache_key)
+    now = monotonic()
+    if cached and now - cached[0] <= _ACCOUNT_STATUS_CACHE_TTL_SECONDS:
+        return cached[1]
+    cached_error = _ACCOUNT_STATUS_ERROR_CACHE.get(cache_key)
+    if cached_error and now - cached_error[0] <= _ACCOUNT_STATUS_ERROR_TTL_SECONDS:
+        raise ConnectSafelyUnavailable(cached_error[1])
+
+    with _ACCOUNT_STATUS_LOCK:
+        cached = _ACCOUNT_STATUS_CACHE.get(cache_key)
+        now = monotonic()
+        if cached and now - cached[0] <= _ACCOUNT_STATUS_CACHE_TTL_SECONDS:
+            return cached[1]
+        cached_error = _ACCOUNT_STATUS_ERROR_CACHE.get(cache_key)
+        if cached_error and now - cached_error[0] <= _ACCOUNT_STATUS_ERROR_TTL_SECONDS:
+            raise ConnectSafelyUnavailable(cached_error[1])
+        try:
+            account = _fetch_account_status(settings)
+        except ConnectSafelyUnavailable as exc:
+            if cached and now - cached[0] <= _ACCOUNT_STATUS_STALE_TTL_SECONDS:
+                logger.warning("Using recently cached ConnectSafely account status")
+                return cached[1]
+            _ACCOUNT_STATUS_ERROR_CACHE[cache_key] = (monotonic(), str(exc))
+            raise
+        _ACCOUNT_STATUS_CACHE[cache_key] = (monotonic(), account)
+        _ACCOUNT_STATUS_ERROR_CACHE.pop(cache_key, None)
+        return account
 
 
 def _items(payload: dict[str, Any]) -> list[dict[str, Any]]:
@@ -321,6 +409,7 @@ def _resolve_linkedin_company_id(
     normalized_name = _normalized_company_name(company_name)
     cache_key = (settings.connectsafely_account_id or "", normalized_name)
     if cache_key in _LINKEDIN_COMPANY_ID_CACHE:
+        logger.info("ConnectSafely company ID cache hit company=%s", company_name)
         return _LINKEDIN_COMPANY_ID_CACHE[cache_key]
     body: dict[str, Any] = {
         "keywords": company_name,
@@ -330,12 +419,18 @@ def _resolve_linkedin_company_id(
     }
     if settings.connectsafely_account_id:
         body["accountId"] = settings.connectsafely_account_id
-    payload = _request(
-        settings,
-        "POST",
-        "/linkedin/search/companies",
-        json=body,
-    )
+    logger.info("ConnectSafely company lookup started company=%s", company_name)
+    try:
+        payload = _request(
+            settings,
+            "POST",
+            "/linkedin/search/companies",
+            json=body,
+        )
+    except ConnectSafelyUnavailable as exc:
+        raise ConnectSafelyUnavailable(
+            f"LinkedIn company lookup failed for {company_name}: {exc}"
+        ) from exc
     companies = _company_items(payload)
     exact_matches = [
         item
@@ -349,10 +444,20 @@ def _resolve_linkedin_company_id(
         )
     ]
     if not exact_matches:
+        logger.info(
+            "ConnectSafely company lookup returned no exact match company=%s candidates=%s",
+            company_name,
+            len(companies),
+        )
         return None
     company_id = _first_string(exact_matches[0], "companyId", "id", "entityUrn")
     if company_id:
         _LINKEDIN_COMPANY_ID_CACHE[cache_key] = company_id
+        logger.info(
+            "ConnectSafely company lookup resolved company=%s company_id=%s",
+            company_name,
+            company_id,
+        )
     return company_id
 
 
@@ -416,22 +521,51 @@ def discover_contacts(
     }
     if settings.connectsafely_account_id:
         body["accountId"] = settings.connectsafely_account_id
-    payload = _request(
-        settings,
-        "POST",
-        "/linkedin/search/people",
-        json=body,
+    logger.info(
+        "ConnectSafely people search started company=%s company_id=%s limit=%s",
+        company.name,
+        linkedin_company_id or "name-filter",
+        limit,
+    )
+    try:
+        payload = _request(
+            settings,
+            "POST",
+            "/linkedin/search/people",
+            json=body,
+        )
+    except ConnectSafelyUnavailable as exc:
+        raise ConnectSafelyUnavailable(
+            f"LinkedIn people search failed for {company.name}: {exc}"
+        ) from exc
+    logger.info(
+        "ConnectSafely people search completed company=%s results=%s",
+        company.name,
+        len(_items(payload)),
     )
     if not _items(payload) and linkedin_company_id:
         try:
+            logger.info(
+                "ConnectSafely people search v2 fallback started company=%s",
+                company.name,
+            )
             payload = _request(
                 settings,
                 "POST",
                 "/linkedin/search/people/v2",
                 json=body,
             )
-        except ConnectSafelyUnavailable:
-            pass
+            logger.info(
+                "ConnectSafely people search v2 fallback completed company=%s results=%s",
+                company.name,
+                len(_items(payload)),
+            )
+        except ConnectSafelyUnavailable as exc:
+            logger.warning(
+                "ConnectSafely people search v2 fallback failed company=%s error=%s",
+                company.name,
+                exc,
+            )
     contacts: list[DiscoveredContact] = []
     seen: set[str] = set()
     for item in _items(payload):

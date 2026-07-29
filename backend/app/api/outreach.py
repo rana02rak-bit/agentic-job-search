@@ -174,8 +174,10 @@ def approve_message(message_id: int, db: DbSession) -> OutreachAction:
     db.commit()
     message = load_message(db, message.id)
     settings = get_settings()
-    automatic_send_available = False
-    if settings.connectsafely_api_key:
+    automatic_send_available = bool(
+        settings.connectsafely_api_key and settings.connectsafely_account_id
+    )
+    if settings.connectsafely_api_key and not settings.connectsafely_account_id:
         try:
             automatic_send_available = get_account_status(settings).connected
         except ConnectSafelyUnavailable:
@@ -271,17 +273,21 @@ def delivery_capabilities(db: DbSession) -> DeliveryCapabilities:
     account_name = None
     reason = "Add a fresh ConnectSafely API key locally, then connect LinkedIn."
     if settings.connectsafely_api_key:
-        try:
-            account = get_account_status(settings)
-            connected = account.connected
-            account_name = account.name
-            reason = (
-                f"Approved DMs send through {account.name or 'the connected LinkedIn account'}."
-                if connected
-                else "Connect your LinkedIn account in the ConnectSafely dashboard."
-            )
-        except ConnectSafelyUnavailable as exc:
-            reason = str(exc)
+        if settings.connectsafely_account_id:
+            connected = True
+            reason = "Approved DMs send through the configured LinkedIn account."
+        else:
+            try:
+                account = get_account_status(settings)
+                connected = account.connected
+                account_name = account.name
+                reason = (
+                    f"Approved DMs send through {account.name or 'the connected LinkedIn account'}."
+                    if connected
+                    else "Connect your LinkedIn account in the ConnectSafely dashboard."
+                )
+            except ConnectSafelyUnavailable as exc:
+                reason = str(exc)
     return DeliveryCapabilities(
         automatic_linkedin_send=connected,
         mode="CONNECTSAFELY",

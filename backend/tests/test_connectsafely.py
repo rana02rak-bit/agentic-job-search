@@ -3,6 +3,7 @@ import pytest
 
 from app.core.config import Settings
 from app.models import Company, Job
+from app.services import connectsafely
 from app.services.connectsafely import (
     ConnectSafelyUnavailable,
     discover_contacts,
@@ -11,12 +12,40 @@ from app.services.connectsafely import (
 )
 
 
+@pytest.fixture(autouse=True)
+def clear_connectsafely_caches() -> None:
+    connectsafely._ACCOUNT_STATUS_CACHE.clear()
+    connectsafely._ACCOUNT_STATUS_ERROR_CACHE.clear()
+    connectsafely._LINKEDIN_COMPANY_ID_CACHE.clear()
+
+
 def response(payload: dict) -> httpx.Response:
     return httpx.Response(
         200,
         json=payload,
         request=httpx.Request("GET", "https://api.connectsafely.ai/test"),
     )
+
+
+def test_response_reader_returns_complete_json_without_waiting_for_socket_close() -> None:
+    class ResponseThatKeepsConnectionOpen:
+        calls = 0
+
+        def read(self, _size: int) -> bytes:
+            raise AssertionError("read1 should be preferred")
+
+        def read1(self, _size: int) -> bytes:
+            self.calls += 1
+            if self.calls == 1:
+                return b'{"success": true, "people": []}'
+            raise TimeoutError("server kept the connection open")
+
+    provider_response = ResponseThatKeepsConnectionOpen()
+
+    content = connectsafely._read_json_response(provider_response)
+
+    assert content == b'{"success": true, "people": []}'
+    assert provider_response.calls == 1
 
 
 def test_account_status_parses_connected_account(monkeypatch) -> None:
@@ -204,14 +233,30 @@ def test_invalid_outbound_ca_bundle_is_explained() -> None:
     assert "could not be loaded" in str(exc_info.value)
 
 
-def test_account_status_retries_one_read_timeout(monkeypatch) -> None:
+def test_account_status_times_out_quickly_without_retry(monkeypatch) -> None:
     calls = 0
 
-    def flaky_request(*_args, **_kwargs) -> httpx.Response:
+    def timeout_request(*_args, **_kwargs) -> httpx.Response:
         nonlocal calls
         calls += 1
-        if calls == 1:
-            raise TimeoutError("provider slow")
+        raise TimeoutError("provider slow")
+
+    monkeypatch.setattr("app.services.connectsafely._transport_request", timeout_request)
+
+    with pytest.raises(ConnectSafelyUnavailable):
+        get_account_status(Settings(connectsafely_api_key="test-key"))
+    with pytest.raises(ConnectSafelyUnavailable):
+        get_account_status(Settings(connectsafely_api_key="test-key"))
+
+    assert calls == 1
+
+
+def test_account_status_cache_avoids_duplicate_provider_calls(monkeypatch) -> None:
+    calls = 0
+
+    def account_request(*_args, **_kwargs) -> httpx.Response:
+        nonlocal calls
+        calls += 1
         return response(
             {
                 "id": "acc-1",
@@ -221,12 +266,14 @@ def test_account_status_retries_one_read_timeout(monkeypatch) -> None:
             }
         )
 
-    monkeypatch.setattr("app.services.connectsafely._transport_request", flaky_request)
+    monkeypatch.setattr("app.services.connectsafely._transport_request", account_request)
+    settings = Settings(connectsafely_api_key="test-key")
 
-    account = get_account_status(Settings(connectsafely_api_key="test-key"))
+    first = get_account_status(settings)
+    second = get_account_status(settings)
 
-    assert calls == 2
-    assert account.connected is True
+    assert calls == 1
+    assert first == second
 
 
 def test_send_does_not_retry_read_timeout(monkeypatch) -> None:

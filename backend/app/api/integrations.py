@@ -25,6 +25,7 @@ def integration_status() -> IntegrationStatus:
         ai_provider = settings.ai_provider
         ai_configured = False
     configured = bool(settings.connectsafely_api_key)
+    targeted_account = bool(settings.connectsafely_account_id)
     connected = False
     account_name = None
     connectsafely_error = None
@@ -46,7 +47,7 @@ def integration_status() -> IntegrationStatus:
         )
     if not configured:
         missing.append("CONNECTSAFELY_API_KEY")
-    elif not connected:
+    elif not connected and not targeted_account:
         missing.append("Connect LinkedIn in ConnectSafely")
     return IntegrationStatus(
         ai_provider=ai_provider,
@@ -57,7 +58,7 @@ def integration_status() -> IntegrationStatus:
         connectsafely_account_connected=connected,
         connectsafely_account_name=account_name,
         connectsafely_error=connectsafely_error,
-        ready_for_contact_discovery=configured and connected,
-        ready_for_linkedin_sending=configured and connected,
+        ready_for_contact_discovery=configured and (connected or targeted_account),
+        ready_for_linkedin_sending=configured and (connected or targeted_account),
         missing=missing,
     )
