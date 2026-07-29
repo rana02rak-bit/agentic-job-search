@@ -26,10 +26,10 @@ def integration_status() -> IntegrationStatus:
         ai_configured = False
     configured = bool(settings.connectsafely_api_key)
     targeted_account = bool(settings.connectsafely_account_id)
-    connected = False
-    account_name = None
+    connected = configured and targeted_account
+    account_name = "Configured LinkedIn account" if connected else None
     connectsafely_error = None
-    if configured:
+    if configured and not targeted_account:
         try:
             account = get_account_status(settings)
             connected = account.connected

@@ -168,6 +168,34 @@ def test_connectsafely_discovers_and_shortlists_people(monkeypatch) -> None:
     assert result["people"][0]["is_shortlisted"] is True
 
 
+def test_configured_linkedin_account_does_not_call_provider_during_dashboard_load(
+    monkeypatch,
+) -> None:
+    settings = Settings(
+        connectsafely_api_key="test-connectsafely-key",
+        connectsafely_account_id="account-test",
+        gemini_api_key="test-gemini-key",
+    )
+    monkeypatch.setattr("app.api.integrations.get_settings", lambda: settings)
+
+    def unexpected_status_call(*_args) -> ConnectSafelyAccount:
+        raise AssertionError("Dashboard loading must not call ConnectSafely account status")
+
+    monkeypatch.setattr(
+        "app.api.integrations.get_account_status",
+        unexpected_status_call,
+    )
+
+    response = client.get("/api/integrations/status")
+
+    assert response.status_code == 200
+    result = response.json()
+    assert result["connectsafely_account_connected"] is True
+    assert result["connectsafely_error"] is None
+    assert result["ready_for_contact_discovery"] is True
+    assert result["ready_for_linkedin_sending"] is True
+
+
 def test_ai_discovery_can_auto_pick_high_scoring_firms(monkeypatch) -> None:
     monkeypatch.setattr(
         "app.api.discovery.generate_company_suggestions",
