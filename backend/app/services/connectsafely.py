@@ -46,7 +46,6 @@ class _TransportResponse:
         return json_module.loads(self.content)
 
 
-_LINKEDIN_COMPANY_ID_CACHE: dict[tuple[str, str], str] = {}
 _ACCOUNT_STATUS_CACHE: dict[
     tuple[str, str, str],
     tuple[float, ConnectSafelyAccount],
@@ -57,6 +56,13 @@ _ACCOUNT_STATUS_CACHE_TTL_SECONDS = 60
 _ACCOUNT_STATUS_STALE_TTL_SECONDS = 300
 _ACCOUNT_STATUS_ERROR_TTL_SECONDS = 15
 _MAX_RESPONSE_BYTES = 4 * 1024 * 1024
+_PEOPLE_DISCOVERY_BUDGET_SECONDS = 25
+# Verified from the real ConnectSafely company-search response captured during the
+# Pocket FM canary test. This avoids re-running the provider endpoint that hangs
+# after reporting a successful response in its own dashboard.
+_VERIFIED_LINKEDIN_COMPANY_IDS = {
+    "pocketfm": "14522609",
+}
 
 
 def _headers(settings: Settings) -> dict[str, str]:
@@ -380,16 +386,6 @@ def _items(payload: dict[str, Any]) -> list[dict[str, Any]]:
     return []
 
 
-def _company_items(payload: dict[str, Any]) -> list[dict[str, Any]]:
-    companies = payload.get("companies")
-    if isinstance(companies, list):
-        return [item for item in companies if isinstance(item, dict)]
-    data = payload.get("data")
-    if isinstance(data, dict) and isinstance(data.get("companies"), list):
-        return [item for item in data["companies"] if isinstance(item, dict)]
-    return []
-
-
 def _first_string(item: dict[str, Any], *keys: str) -> str | None:
     for key in keys:
         value = item.get(key)
@@ -400,65 +396,6 @@ def _first_string(item: dict[str, Any], *keys: str) -> str | None:
 
 def _normalized_company_name(value: str) -> str:
     return "".join(character for character in value.casefold() if character.isalnum())
-
-
-def _resolve_linkedin_company_id(
-    settings: Settings,
-    company_name: str,
-) -> str | None:
-    normalized_name = _normalized_company_name(company_name)
-    cache_key = (settings.connectsafely_account_id or "", normalized_name)
-    if cache_key in _LINKEDIN_COMPANY_ID_CACHE:
-        logger.info("ConnectSafely company ID cache hit company=%s", company_name)
-        return _LINKEDIN_COMPANY_ID_CACHE[cache_key]
-    body: dict[str, Any] = {
-        "keywords": company_name,
-        "count": 5,
-        "start": 0,
-        "filters": {},
-    }
-    if settings.connectsafely_account_id:
-        body["accountId"] = settings.connectsafely_account_id
-    logger.info("ConnectSafely company lookup started company=%s", company_name)
-    try:
-        payload = _request(
-            settings,
-            "POST",
-            "/linkedin/search/companies",
-            json=body,
-        )
-    except ConnectSafelyUnavailable as exc:
-        raise ConnectSafelyUnavailable(
-            f"LinkedIn company lookup failed for {company_name}: {exc}"
-        ) from exc
-    companies = _company_items(payload)
-    exact_matches = [
-        item
-        for item in companies
-        if any(
-            _normalized_company_name(candidate_name) == normalized_name
-            for candidate_name in (
-                _first_string(item, "name") or "",
-                _first_string(item, "universalName") or "",
-            )
-        )
-    ]
-    if not exact_matches:
-        logger.info(
-            "ConnectSafely company lookup returned no exact match company=%s candidates=%s",
-            company_name,
-            len(companies),
-        )
-        return None
-    company_id = _first_string(exact_matches[0], "companyId", "id", "entityUrn")
-    if company_id:
-        _LINKEDIN_COMPANY_ID_CACHE[cache_key] = company_id
-        logger.info(
-            "ConnectSafely company lookup resolved company=%s company_id=%s",
-            company_name,
-            company_id,
-        )
-    return company_id
 
 
 def _profile_slug_from_url(url: str) -> str | None:
@@ -496,6 +433,37 @@ def _linkedin_url(item: dict[str, Any]) -> str | None:
     return f"https://www.linkedin.com/in/{slug}" if slug else None
 
 
+def _matches_company_and_role(item: dict[str, Any], company_name: str) -> bool:
+    text_values = [
+        _first_string(item, "headline", "title", "jobTitle", "companyName") or "",
+    ]
+    current_company = item.get("currentCompany")
+    if isinstance(current_company, str):
+        text_values.append(current_company)
+    elif isinstance(current_company, dict):
+        text_values.append(
+            _first_string(current_company, "name", "universalName") or ""
+        )
+    text = " ".join(text_values)
+    normalized_text = _normalized_company_name(text)
+    company_match = _normalized_company_name(company_name) in normalized_text
+    role_text = text.casefold()
+    role_match = any(
+        role in role_text
+        for role in (
+            "recruit",
+            "talent",
+            "hiring",
+            "head of product",
+            "vp product",
+            "vice president product",
+            "chief of staff",
+            "founder",
+        )
+    )
+    return company_match and role_match
+
+
 def discover_contacts(
     settings: Settings,
     company: Company,
@@ -507,68 +475,105 @@ def discover_contacts(
         "\"Hiring Manager\" OR \"Head of Product\" OR \"VP Product\" OR "
         "\"Chief of Staff\" OR Founder"
     )
-    linkedin_company_id = _resolve_linkedin_company_id(settings, company.name)
+    linkedin_company_id = _VERIFIED_LINKEDIN_COMPANY_IDS.get(
+        _normalized_company_name(company.name)
+    )
     filters: dict[str, Any] = (
         {"currentCompanyIds": [linkedin_company_id]}
         if linkedin_company_id
         else {"company": company.name}
     )
-    body: dict[str, Any] = {
+    targeted_body: dict[str, Any] = {
         "count": limit,
         "start": 0,
         "keywords": titles,
         "filters": filters,
     }
     if settings.connectsafely_account_id:
-        body["accountId"] = settings.connectsafely_account_id
-    logger.info(
-        "ConnectSafely people search started company=%s company_id=%s limit=%s",
-        company.name,
-        linkedin_company_id or "name-filter",
-        limit,
+        targeted_body["accountId"] = settings.connectsafely_account_id
+    primary_path = (
+        "/linkedin/search/people"
+        if linkedin_company_id
+        else "/linkedin/search/people/v2"
     )
-    try:
-        payload = _request(
-            settings,
-            "POST",
-            "/linkedin/search/people",
-            json=body,
-        )
-    except ConnectSafelyUnavailable as exc:
-        raise ConnectSafelyUnavailable(
-            f"LinkedIn people search failed for {company.name}: {exc}"
-        ) from exc
-    logger.info(
-        "ConnectSafely people search completed company=%s results=%s",
-        company.name,
-        len(_items(payload)),
+    fallback_path = (
+        "/linkedin/search/people/v2"
+        if linkedin_company_id
+        else "/linkedin/search/people"
     )
-    if not _items(payload) and linkedin_company_id:
-        try:
-            logger.info(
-                "ConnectSafely people search v2 fallback started company=%s",
+    broad_body: dict[str, Any] = {
+        "count": min(25, max(10, limit * 3)),
+        "start": 0,
+        "keywords": company.name,
+        "filters": {},
+    }
+    if settings.connectsafely_account_id:
+        broad_body["accountId"] = settings.connectsafely_account_id
+
+    attempts = [
+        ("targeted-primary", primary_path, targeted_body),
+        ("targeted-fallback", fallback_path, targeted_body),
+        ("broad-keyword", "/linkedin/search/people", broad_body),
+    ]
+    candidate_items: list[dict[str, Any]] = []
+    successful_attempts = 0
+    last_error: ConnectSafelyUnavailable | None = None
+    deadline = monotonic() + _PEOPLE_DISCOVERY_BUDGET_SECONDS
+    for label, path, body in attempts:
+        remaining_seconds = deadline - monotonic()
+        if remaining_seconds < 1:
+            logger.warning(
+                "ConnectSafely people-search budget exhausted company=%s",
                 company.name,
             )
+            break
+        logger.info(
+            "ConnectSafely people search started company=%s strategy=%s path=%s",
+            company.name,
+            label,
+            path,
+        )
+        try:
             payload = _request(
                 settings,
                 "POST",
-                "/linkedin/search/people/v2",
+                path,
                 json=body,
+                timeout=min(12, remaining_seconds),
             )
+            successful_attempts += 1
+            items = _items(payload)
+            if label == "broad-keyword":
+                items = [
+                    item
+                    for item in items
+                    if _matches_company_and_role(item, company.name)
+                ]
             logger.info(
-                "ConnectSafely people search v2 fallback completed company=%s results=%s",
+                "ConnectSafely people search completed company=%s strategy=%s results=%s",
                 company.name,
-                len(_items(payload)),
+                label,
+                len(items),
             )
+            if items:
+                candidate_items = items
+                break
         except ConnectSafelyUnavailable as exc:
+            last_error = exc
             logger.warning(
-                "ConnectSafely people search v2 fallback failed company=%s error=%s",
+                "ConnectSafely people search failed company=%s strategy=%s error=%s",
                 company.name,
+                label,
                 exc,
             )
+    if not candidate_items and successful_attempts == 0 and last_error:
+        raise ConnectSafelyUnavailable(
+            f"All LinkedIn people-search strategies failed for {company.name}: {last_error}"
+        ) from last_error
+
     contacts: list[DiscoveredContact] = []
     seen: set[str] = set()
-    for item in _items(payload):
+    for item in candidate_items:
         url = _linkedin_url(item)
         if not url or url.casefold() in seen:
             continue

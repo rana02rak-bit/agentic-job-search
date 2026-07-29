@@ -16,7 +16,6 @@ from app.services.connectsafely import (
 def clear_connectsafely_caches() -> None:
     connectsafely._ACCOUNT_STATUS_CACHE.clear()
     connectsafely._ACCOUNT_STATUS_ERROR_CACHE.clear()
-    connectsafely._LINKEDIN_COMPANY_ID_CACHE.clear()
 
 
 def response(payload: dict) -> httpx.Response:
@@ -92,13 +91,6 @@ def test_people_search_maps_linkedin_results(monkeypatch) -> None:
     def fake_request(_method: str, url: str, **kwargs) -> httpx.Response:
         captured["urls"].append(url)
         captured["body"] = kwargs["json"]
-        if url.endswith("/linkedin/search/companies"):
-            return response(
-                {
-                    "success": True,
-                    "companies": [{"companyId": "12345", "name": "Acme"}],
-                }
-            )
         return response(
             {
                 "success": True,
@@ -129,26 +121,20 @@ def test_people_search_maps_linkedin_results(monkeypatch) -> None:
     assert contacts[0].linkedin_url == "https://www.linkedin.com/in/asha-rao"
     assert contacts[0].mutuals == 2
     assert "Recruiter" in captured["body"]["keywords"]
-    assert captured["body"]["filters"]["currentCompanyIds"] == ["12345"]
+    assert captured["body"]["filters"]["company"] == "Acme"
     assert "title" not in captured["body"]["filters"]
     assert "locationId" not in captured["body"]["filters"]
-    assert captured["urls"][0].endswith("/linkedin/search/companies")
-    assert captured["urls"][1].endswith("/linkedin/search/people")
+    assert captured["urls"] == [
+        "https://api.connectsafely.ai/linkedin/search/people/v2"
+    ]
 
 
-def test_people_search_uses_v2_when_v1_is_empty(monkeypatch) -> None:
+def test_people_search_uses_v1_when_v2_is_empty(monkeypatch) -> None:
     captured_urls: list[str] = []
 
     def fake_request(_method: str, url: str, **_kwargs) -> httpx.Response:
         captured_urls.append(url)
-        if url.endswith("/linkedin/search/companies"):
-            return response(
-                {
-                    "success": True,
-                    "companies": [{"companyId": "67890", "name": "Fallback Inc"}],
-                }
-            )
-        if url.endswith("/linkedin/search/people/v2"):
+        if url.endswith("/linkedin/search/people") and not url.endswith("/v2"):
             return response(
                 {
                     "success": True,
@@ -175,7 +161,49 @@ def test_people_search_uses_v2_when_v1_is_empty(monkeypatch) -> None:
 
     assert len(contacts) == 1
     assert contacts[0].linkedin_url == "https://www.linkedin.com/in/ravi-shah"
-    assert captured_urls[-1].endswith("/linkedin/search/people/v2")
+    assert captured_urls == [
+        "https://api.connectsafely.ai/linkedin/search/people/v2",
+        "https://api.connectsafely.ai/linkedin/search/people",
+    ]
+
+
+def test_pocket_fm_uses_verified_company_id_without_company_lookup(monkeypatch) -> None:
+    captured: dict = {}
+
+    def fake_request(_method: str, url: str, **kwargs) -> httpx.Response:
+        captured["url"] = url
+        captured["body"] = kwargs["json"]
+        return response(
+            {
+                "success": True,
+                "people": [
+                    {
+                        "firstName": "Priya",
+                        "lastName": "Sharma",
+                        "profileId": "priya-pocket-fm",
+                        "headline": "Talent Acquisition at Pocket FM",
+                    }
+                ],
+            }
+        )
+
+    monkeypatch.setattr("app.services.connectsafely._transport_request", fake_request)
+
+    contacts = discover_contacts(
+        Settings(
+            connectsafely_api_key="test-key",
+            connectsafely_account_id="account-test",
+        ),
+        Company(name="Pocket FM"),
+        None,
+        5,
+    )
+
+    assert len(contacts) == 1
+    assert captured["url"].endswith("/linkedin/search/people")
+    assert captured["body"]["accountId"] == "account-test"
+    assert captured["body"]["filters"]["currentCompanyIds"] == ["14522609"]
+    assert "/linkedin/search/companies" not in captured["url"]
 
 
 def test_send_uses_current_conversations_endpoint(monkeypatch) -> None:
