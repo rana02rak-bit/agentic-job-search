@@ -1,9 +1,10 @@
+import json as json_module
 import ssl
 from dataclasses import dataclass
 from typing import Any
-from urllib.parse import urlparse
-
-import httpx
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlencode, urlparse
+from urllib.request import HTTPSHandler, ProxyHandler, Request, build_opener
 
 from app.core.config import Settings
 from app.models import Company, Job
@@ -28,6 +29,15 @@ class DiscoveredContact:
     designation: str | None
     activity: str
     mutuals: int
+
+
+@dataclass(frozen=True)
+class _TransportResponse:
+    status_code: int
+    content: bytes
+
+    def json(self) -> Any:
+        return json_module.loads(self.content)
 
 
 _LINKEDIN_COMPANY_ID_CACHE: dict[tuple[str, str], str] = {}
@@ -59,7 +69,7 @@ def _ssl_context(settings: Settings) -> ssl.SSLContext:
     return context
 
 
-def _connection_error_message(exc: httpx.ConnectError) -> str:
+def _connection_error_message(exc: ConnectionError) -> str:
     detail = str(exc).casefold()
     if "certificate_verify_failed" in detail or "certificate verify failed" in detail:
         return (
@@ -87,6 +97,47 @@ def _connection_error_message(exc: httpx.ConnectError) -> str:
     )
 
 
+def _transport_request(
+    method: str,
+    url: str,
+    *,
+    settings: Settings,
+    headers: dict[str, str],
+    json: dict[str, Any] | None,
+    params: dict[str, Any] | None,
+    timeout: float,
+) -> _TransportResponse:
+    if params:
+        separator = "&" if "?" in url else "?"
+        url = f"{url}{separator}{urlencode(params)}"
+    request = Request(
+        url,
+        data=json_module.dumps(json).encode("utf-8") if json is not None else None,
+        headers=headers,
+        method=method,
+    )
+    opener = build_opener(
+        ProxyHandler({}),
+        HTTPSHandler(context=_ssl_context(settings)),
+    )
+    try:
+        with opener.open(request, timeout=timeout) as response:
+            return _TransportResponse(
+                status_code=response.status,
+                content=response.read(),
+            )
+    except HTTPError as exc:
+        return _TransportResponse(status_code=exc.code, content=exc.read())
+    except TimeoutError as exc:
+        raise TimeoutError(str(exc)) from exc
+    except URLError as exc:
+        if isinstance(exc.reason, TimeoutError):
+            raise TimeoutError(str(exc.reason)) from exc
+        raise ConnectionError(str(exc.reason)) from exc
+    except OSError as exc:
+        raise ConnectionError(str(exc)) from exc
+
+
 def _request(
     settings: Settings,
     method: str,
@@ -100,18 +151,17 @@ def _request(
     attempts = 2 if retry_on_read_timeout else 1
     for attempt in range(attempts):
         try:
-            response = httpx.request(
+            response = _transport_request(
                 method,
                 f"{settings.connectsafely_base_url.rstrip('/')}{path}",
+                settings=settings,
                 headers=_headers(settings),
                 json=json,
                 params=params,
-                timeout=httpx.Timeout(connect=10, read=30, write=30, pool=10),
-                verify=_ssl_context(settings),
-                trust_env=True,
+                timeout=30,
             )
             break
-        except httpx.ReadTimeout as exc:
+        except TimeoutError as exc:
             if attempt + 1 < attempts:
                 continue
             if prevent_duplicate_on_timeout:
@@ -129,12 +179,8 @@ def _request(
                 "ConnectSafely did not respond after two read attempts. "
                 "The provider is temporarily slow or unavailable."
             ) from exc
-        except httpx.ConnectError as exc:
+        except ConnectionError as exc:
             raise ConnectSafelyUnavailable(_connection_error_message(exc)) from exc
-        except httpx.HTTPError as exc:
-            raise ConnectSafelyUnavailable(
-                f"Could not reach ConnectSafely: {exc.__class__.__name__}"
-            ) from exc
     if response.status_code >= 400:
         try:
             payload = response.json()

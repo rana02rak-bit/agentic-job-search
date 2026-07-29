@@ -21,7 +21,7 @@ def response(payload: dict) -> httpx.Response:
 
 def test_account_status_parses_connected_account(monkeypatch) -> None:
     monkeypatch.setattr(
-        "app.services.connectsafely.httpx.request",
+        "app.services.connectsafely._transport_request",
         lambda *_args, **_kwargs: response(
             {
                 "data": {
@@ -43,7 +43,7 @@ def test_account_status_parses_connected_account(monkeypatch) -> None:
 
 def test_account_status_rejects_expired_linkedin_tokens(monkeypatch) -> None:
     monkeypatch.setattr(
-        "app.services.connectsafely.httpx.request",
+        "app.services.connectsafely._transport_request",
         lambda *_args, **_kwargs: response(
             {
                 "id": "acc-1",
@@ -86,7 +86,7 @@ def test_people_search_maps_linkedin_results(monkeypatch) -> None:
         )
 
     monkeypatch.setattr(
-        "app.services.connectsafely.httpx.request",
+        "app.services.connectsafely._transport_request",
         fake_request,
     )
     contacts = discover_contacts(
@@ -135,7 +135,7 @@ def test_people_search_uses_v2_when_v1_is_empty(monkeypatch) -> None:
             )
         return response({"success": True, "people": []})
 
-    monkeypatch.setattr("app.services.connectsafely.httpx.request", fake_request)
+    monkeypatch.setattr("app.services.connectsafely._transport_request", fake_request)
 
     contacts = discover_contacts(
         Settings(connectsafely_api_key="test-key"),
@@ -163,7 +163,7 @@ def test_send_uses_current_conversations_endpoint(monkeypatch) -> None:
             }
         )
 
-    monkeypatch.setattr("app.services.connectsafely.httpx.request", fake_request)
+    monkeypatch.setattr("app.services.connectsafely._transport_request", fake_request)
     message_id, conversation_id = send_linkedin_message(
         Settings(connectsafely_api_key="test-key"),
         "https://www.linkedin.com/in/asha-rao",
@@ -178,15 +178,12 @@ def test_send_uses_current_conversations_endpoint(monkeypatch) -> None:
 
 
 def test_connect_error_explains_corporate_tls_fix(monkeypatch) -> None:
-    request = httpx.Request("GET", "https://api.connectsafely.ai/linkedin/account/status")
-
     def fail_request(*_args, **_kwargs) -> httpx.Response:
-        raise httpx.ConnectError(
-            "[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed",
-            request=request,
+        raise ConnectionError(
+            "[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed"
         )
 
-    monkeypatch.setattr("app.services.connectsafely.httpx.request", fail_request)
+    monkeypatch.setattr("app.services.connectsafely._transport_request", fail_request)
 
     with pytest.raises(ConnectSafelyUnavailable) as exc_info:
         get_account_status(Settings(connectsafely_api_key="test-key"))
@@ -208,14 +205,13 @@ def test_invalid_outbound_ca_bundle_is_explained() -> None:
 
 
 def test_account_status_retries_one_read_timeout(monkeypatch) -> None:
-    request = httpx.Request("GET", "https://api.connectsafely.ai/linkedin/account/status")
     calls = 0
 
     def flaky_request(*_args, **_kwargs) -> httpx.Response:
         nonlocal calls
         calls += 1
         if calls == 1:
-            raise httpx.ReadTimeout("provider slow", request=request)
+            raise TimeoutError("provider slow")
         return response(
             {
                 "id": "acc-1",
@@ -225,7 +221,7 @@ def test_account_status_retries_one_read_timeout(monkeypatch) -> None:
             }
         )
 
-    monkeypatch.setattr("app.services.connectsafely.httpx.request", flaky_request)
+    monkeypatch.setattr("app.services.connectsafely._transport_request", flaky_request)
 
     account = get_account_status(Settings(connectsafely_api_key="test-key"))
 
@@ -234,18 +230,14 @@ def test_account_status_retries_one_read_timeout(monkeypatch) -> None:
 
 
 def test_send_does_not_retry_read_timeout(monkeypatch) -> None:
-    request = httpx.Request(
-        "POST",
-        "https://api.connectsafely.ai/linkedin/conversations/send",
-    )
     calls = 0
 
     def timeout_request(*_args, **_kwargs) -> httpx.Response:
         nonlocal calls
         calls += 1
-        raise httpx.ReadTimeout("provider slow", request=request)
+        raise TimeoutError("provider slow")
 
-    monkeypatch.setattr("app.services.connectsafely.httpx.request", timeout_request)
+    monkeypatch.setattr("app.services.connectsafely._transport_request", timeout_request)
 
     with pytest.raises(ConnectSafelyUnavailable):
         send_linkedin_message(
