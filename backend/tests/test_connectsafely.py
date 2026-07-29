@@ -58,10 +58,18 @@ def test_account_status_rejects_expired_linkedin_tokens(monkeypatch) -> None:
 
 
 def test_people_search_maps_linkedin_results(monkeypatch) -> None:
-    captured: dict = {}
+    captured: dict = {"urls": []}
 
-    def fake_request(*_args, **kwargs) -> httpx.Response:
+    def fake_request(_method: str, url: str, **kwargs) -> httpx.Response:
+        captured["urls"].append(url)
         captured["body"] = kwargs["json"]
+        if url.endswith("/linkedin/search/companies"):
+            return response(
+                {
+                    "success": True,
+                    "companies": [{"companyId": "12345", "name": "Acme"}],
+                }
+            )
         return response(
             {
                 "success": True,
@@ -92,9 +100,53 @@ def test_people_search_maps_linkedin_results(monkeypatch) -> None:
     assert contacts[0].linkedin_url == "https://www.linkedin.com/in/asha-rao"
     assert contacts[0].mutuals == 2
     assert "Recruiter" in captured["body"]["keywords"]
-    assert captured["body"]["filters"]["company"] == "Acme"
+    assert captured["body"]["filters"]["currentCompanyIds"] == ["12345"]
     assert "title" not in captured["body"]["filters"]
     assert "locationId" not in captured["body"]["filters"]
+    assert captured["urls"][0].endswith("/linkedin/search/companies")
+    assert captured["urls"][1].endswith("/linkedin/search/people")
+
+
+def test_people_search_uses_v2_when_v1_is_empty(monkeypatch) -> None:
+    captured_urls: list[str] = []
+
+    def fake_request(_method: str, url: str, **_kwargs) -> httpx.Response:
+        captured_urls.append(url)
+        if url.endswith("/linkedin/search/companies"):
+            return response(
+                {
+                    "success": True,
+                    "companies": [{"companyId": "67890", "name": "Fallback Inc"}],
+                }
+            )
+        if url.endswith("/linkedin/search/people/v2"):
+            return response(
+                {
+                    "success": True,
+                    "people": [
+                        {
+                            "firstName": "Ravi",
+                            "lastName": "Shah",
+                            "profileId": "ravi-shah",
+                            "headline": "Head of Product at Fallback Inc",
+                        }
+                    ],
+                }
+            )
+        return response({"success": True, "people": []})
+
+    monkeypatch.setattr("app.services.connectsafely.httpx.request", fake_request)
+
+    contacts = discover_contacts(
+        Settings(connectsafely_api_key="test-key"),
+        Company(name="Fallback Inc"),
+        None,
+        5,
+    )
+
+    assert len(contacts) == 1
+    assert contacts[0].linkedin_url == "https://www.linkedin.com/in/ravi-shah"
+    assert captured_urls[-1].endswith("/linkedin/search/people/v2")
 
 
 def test_send_uses_current_conversations_endpoint(monkeypatch) -> None:

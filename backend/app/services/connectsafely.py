@@ -30,6 +30,9 @@ class DiscoveredContact:
     mutuals: int
 
 
+_LINKEDIN_COMPANY_ID_CACHE: dict[tuple[str, str], str] = {}
+
+
 def _headers(settings: Settings) -> dict[str, str]:
     if not settings.connectsafely_api_key:
         raise ConnectSafelyUnavailable(
@@ -237,12 +240,69 @@ def _items(payload: dict[str, Any]) -> list[dict[str, Any]]:
     return []
 
 
+def _company_items(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    companies = payload.get("companies")
+    if isinstance(companies, list):
+        return [item for item in companies if isinstance(item, dict)]
+    data = payload.get("data")
+    if isinstance(data, dict) and isinstance(data.get("companies"), list):
+        return [item for item in data["companies"] if isinstance(item, dict)]
+    return []
+
+
 def _first_string(item: dict[str, Any], *keys: str) -> str | None:
     for key in keys:
         value = item.get(key)
         if isinstance(value, str) and value.strip():
             return value.strip()
     return None
+
+
+def _normalized_company_name(value: str) -> str:
+    return "".join(character for character in value.casefold() if character.isalnum())
+
+
+def _resolve_linkedin_company_id(
+    settings: Settings,
+    company_name: str,
+) -> str | None:
+    normalized_name = _normalized_company_name(company_name)
+    cache_key = (settings.connectsafely_account_id or "", normalized_name)
+    if cache_key in _LINKEDIN_COMPANY_ID_CACHE:
+        return _LINKEDIN_COMPANY_ID_CACHE[cache_key]
+    body: dict[str, Any] = {
+        "keywords": company_name,
+        "count": 5,
+        "start": 0,
+        "filters": {},
+    }
+    if settings.connectsafely_account_id:
+        body["accountId"] = settings.connectsafely_account_id
+    payload = _request(
+        settings,
+        "POST",
+        "/linkedin/search/companies",
+        json=body,
+        retry_on_read_timeout=True,
+    )
+    companies = _company_items(payload)
+    exact_matches = [
+        item
+        for item in companies
+        if any(
+            _normalized_company_name(candidate_name) == normalized_name
+            for candidate_name in (
+                _first_string(item, "name") or "",
+                _first_string(item, "universalName") or "",
+            )
+        )
+    ]
+    if not exact_matches:
+        return None
+    company_id = _first_string(exact_matches[0], "companyId", "id", "entityUrn")
+    if company_id:
+        _LINKEDIN_COMPANY_ID_CACHE[cache_key] = company_id
+    return company_id
 
 
 def _profile_slug_from_url(url: str) -> str | None:
@@ -291,13 +351,17 @@ def discover_contacts(
         "\"Hiring Manager\" OR \"Head of Product\" OR \"VP Product\" OR "
         "\"Chief of Staff\" OR Founder"
     )
+    linkedin_company_id = _resolve_linkedin_company_id(settings, company.name)
+    filters: dict[str, Any] = (
+        {"currentCompanyIds": [linkedin_company_id]}
+        if linkedin_company_id
+        else {"company": company.name}
+    )
     body: dict[str, Any] = {
         "count": limit,
         "start": 0,
         "keywords": titles,
-        "filters": {
-            "company": company.name,
-        },
+        "filters": filters,
     }
     if settings.connectsafely_account_id:
         body["accountId"] = settings.connectsafely_account_id
@@ -308,6 +372,17 @@ def discover_contacts(
         json=body,
         retry_on_read_timeout=True,
     )
+    if not _items(payload) and linkedin_company_id:
+        try:
+            payload = _request(
+                settings,
+                "POST",
+                "/linkedin/search/people/v2",
+                json=body,
+                retry_on_read_timeout=True,
+            )
+        except ConnectSafelyUnavailable:
+            pass
     contacts: list[DiscoveredContact] = []
     seen: set[str] = set()
     for item in _items(payload):
