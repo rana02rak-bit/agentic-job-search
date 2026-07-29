@@ -96,7 +96,28 @@ def discover_recruiters(
     try:
         discovered = discover_contacts(get_settings(), company, job, payload.limit)
     except ConnectSafelyUnavailable as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+        saved_people = list(
+            db.scalars(
+                recruiter_query()
+                .where(Recruiter.company_id == company.id)
+                .order_by(Recruiter.reply_probability.desc(), Recruiter.name)
+                .limit(payload.limit)
+            ).all()
+        )
+        if not saved_people:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        return ContactDiscoveryResult(
+            company_id=company.id,
+            discovered=0,
+            stored=0,
+            skipped_duplicates=0,
+            people=saved_people,
+            used_saved_people=True,
+            warning=(
+                "ConnectSafely is temporarily unavailable. "
+                f"Showing {len(saved_people)} people already saved for {company.name}."
+            ),
+        )
 
     stored_ids: list[int] = []
     result_ids: list[int] = []

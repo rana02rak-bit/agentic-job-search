@@ -259,6 +259,8 @@ class ContactDiscoveryResult(BaseModel):
     stored: int
     skipped_duplicates: int
     people: list[RecruiterRead]
+    used_saved_people: bool = False
+    warning: str | None = None
 
 
 class CandidateProfileUpdate(BaseModel):

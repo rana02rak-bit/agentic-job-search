@@ -161,6 +161,8 @@ export interface ContactDiscoveryResult {
   stored: number;
   skipped_duplicates: number;
   people: Recruiter[];
+  used_saved_people: boolean;
+  warning: string | null;
 }
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";

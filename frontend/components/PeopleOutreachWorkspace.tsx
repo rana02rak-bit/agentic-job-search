@@ -59,6 +59,7 @@ export function PeopleOutreachWorkspace({
   const [selectedPersonId, setSelectedPersonId] = useState("");
   const [selectedJobId, setSelectedJobId] = useState("");
   const [shortlistJobIds, setShortlistJobIds] = useState<Record<number, string>>({});
+  const [selectedPeopleIds, setSelectedPeopleIds] = useState<number[]>([]);
   const [extraContext, setExtraContext] = useState("");
   const [draftSubjects, setDraftSubjects] = useState<Record<number, string>>({});
   const [draftBodies, setDraftBodies] = useState<Record<number, string>>({});
@@ -74,6 +75,23 @@ export function PeopleOutreachWorkspace({
       setCapabilities(data.capabilities);
       setIntegrations(data.integrations);
       setProfile(data.profile);
+      setSelectedPersonId((current) => {
+        if (
+          current &&
+          data.people.some(
+            (person) =>
+              person.id === Number(current) &&
+              person.is_shortlisted &&
+              Boolean(person.linkedin_url),
+          )
+        ) {
+          return current;
+        }
+        const firstShortlisted = data.people.find(
+          (person) => person.is_shortlisted && Boolean(person.linkedin_url),
+        );
+        return firstShortlisted ? String(firstShortlisted.id) : "";
+      });
       if (data.profile) {
         setResumeText(data.profile.resume_text);
         setPositioning(data.profile.positioning ?? "");
@@ -149,9 +167,34 @@ export function PeopleOutreachWorkspace({
         limit: Number(discoveryLimit),
       });
       setNotice(
-        `ConnectSafely found ${result.discovered}; ${result.stored} new people saved and ${result.skipped_duplicates} duplicates skipped.`,
+        result.warning ??
+          `ConnectSafely found ${result.discovered}; ${result.stored} new people saved and ${result.skipped_duplicates} duplicates skipped.`,
       );
     });
+  }
+
+  async function shortlistSelectedPeople() {
+    const peopleToShortlist = people.filter(
+      (person) =>
+        selectedPeopleIds.includes(person.id) &&
+        !person.is_shortlisted &&
+        Boolean(person.linkedin_url),
+    );
+    await runAction("bulk-shortlist", async () => {
+      await Promise.all(
+        peopleToShortlist.map((person) => api.shortlistRecruiter(person.id)),
+      );
+      setSelectedPeopleIds([]);
+      setNotice(`${peopleToShortlist.length} people shortlisted.`);
+    });
+  }
+
+  function togglePersonSelection(personId: number) {
+    setSelectedPeopleIds((current) =>
+      current.includes(personId)
+        ? current.filter((id) => id !== personId)
+        : [...current, personId],
+    );
   }
 
   async function addPerson() {
@@ -400,7 +443,22 @@ export function PeopleOutreachWorkspace({
         <div className="panel">
           <div className="panel__heading">
             <h3>People queue</h3>
-            <span>Highest reply probability first</span>
+            <span>Bulk selection enabled</span>
+          </div>
+          <div className="bulk-shortlist-toolbar">
+            <p>Select people below, then shortlist them together.</p>
+            <button
+              type="button"
+              className="button button--primary"
+              disabled={
+                selectedPeopleIds.length === 0 || busy === "bulk-shortlist"
+              }
+              onClick={() => void shortlistSelectedPeople()}
+            >
+              {busy === "bulk-shortlist"
+                ? "Shortlisting…"
+                : `Shortlist selected (${selectedPeopleIds.length})`}
+            </button>
           </div>
           <div className="people-list">
             {people.map((person) => {
@@ -409,6 +467,20 @@ export function PeopleOutreachWorkspace({
               return (
                 <article className="person-card" key={person.id}>
                   <div>
+                    <label className="person-select">
+                      <input
+                        type="checkbox"
+                        checked={
+                          person.is_shortlisted ||
+                          selectedPeopleIds.includes(person.id)
+                        }
+                        disabled={person.is_shortlisted}
+                        onChange={() => togglePersonSelection(person.id)}
+                      />
+                      <span>
+                        {person.is_shortlisted ? "Already shortlisted" : "Select person"}
+                      </span>
+                    </label>
                     <p>
                       {company?.name ?? "Company"} · {person.source}
                     </p>

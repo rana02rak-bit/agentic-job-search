@@ -1,6 +1,10 @@
 from app.core.config import Settings
 from app.schemas import CompanySuggestion, SuggestionBatch
-from app.services.connectsafely import ConnectSafelyAccount, DiscoveredContact
+from app.services.connectsafely import (
+    ConnectSafelyAccount,
+    ConnectSafelyUnavailable,
+    DiscoveredContact,
+)
 from app.services.message_generator import GeneratedOutreach
 from tests.test_api import client
 
@@ -194,6 +198,41 @@ def test_configured_linkedin_account_does_not_call_provider_during_dashboard_loa
     assert result["connectsafely_error"] is None
     assert result["ready_for_contact_discovery"] is True
     assert result["ready_for_linkedin_sending"] is True
+
+
+def test_contact_discovery_reuses_saved_people_during_provider_outage(
+    monkeypatch,
+) -> None:
+    company = client.post(
+        "/api/companies",
+        json={"name": "Saved People Company", "priority": "HIGH"},
+    ).json()
+    saved_person = client.post(
+        "/api/recruiters",
+        json={
+            "company_id": company["id"],
+            "name": "Saved Recruiter",
+            "linkedin_url": "https://www.linkedin.com/in/saved-recruiter-test",
+            "designation": "Talent Partner",
+        },
+    ).json()
+    monkeypatch.setattr(
+        "app.api.recruiters.discover_contacts",
+        lambda *_args: (_ for _ in ()).throw(
+            ConnectSafelyUnavailable("Provider timed out")
+        ),
+    )
+
+    response = client.post(
+        "/api/recruiters/discover",
+        json={"company_id": company["id"], "limit": 5},
+    )
+
+    assert response.status_code == 200
+    result = response.json()
+    assert result["used_saved_people"] is True
+    assert result["people"][0]["id"] == saved_person["id"]
+    assert "Showing 1 people already saved" in result["warning"]
 
 
 def test_ai_discovery_can_auto_pick_high_scoring_firms(monkeypatch) -> None:
