@@ -329,10 +329,14 @@ class OutreachAction(BaseModel):
 
 
 class IntegrationStatus(BaseModel):
+    ai_provider: str
+    ai_configured: bool
     gemini_configured: bool
+    openai_configured: bool
     connectsafely_configured: bool
     connectsafely_account_connected: bool
     connectsafely_account_name: str | None
+    connectsafely_error: str | None
     ready_for_contact_discovery: bool
     ready_for_linkedin_sending: bool
     missing: list[str]

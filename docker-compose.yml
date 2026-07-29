@@ -20,8 +20,11 @@ services:
       context: ./backend
     environment:
       DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://rahulgpt:rahulgpt_local@postgres:5432/rahulgpt}
+      AI_PROVIDER: ${AI_PROVIDER:-auto}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.6-flash}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-5.6-sol}
       CONNECTSAFELY_API_KEY: ${CONNECTSAFELY_API_KEY:-}
       CONNECTSAFELY_ACCOUNT_ID: ${CONNECTSAFELY_ACCOUNT_ID:-}
       CONNECTSAFELY_BASE_URL: ${CONNECTSAFELY_BASE_URL:-https://api.connectsafely.ai}
@@ -47,8 +50,11 @@ services:
     command: ["python", "-m", "app.discovery_worker"]
     environment:
       DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://rahulgpt:rahulgpt_local@postgres:5432/rahulgpt}
+      AI_PROVIDER: ${AI_PROVIDER:-auto}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.6-flash}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-5.6-sol}
       DISCOVERY_RUN_HOUR: ${DISCOVERY_RUN_HOUR:-8}
       DISCOVERY_TIMEZONE: ${DISCOVERY_TIMEZONE:-Asia/Kolkata}
       ATS_CA_BUNDLE: ${ATS_CA_BUNDLE:-}

@@ -9,8 +9,11 @@ class Settings(BaseSettings):
     app_name: str = "RahulGPT Job Search"
     environment: str = "local"
     database_url: str = "postgresql+psycopg://rahulgpt:rahulgpt_local@localhost:5432/rahulgpt"
+    ai_provider: str = "auto"
     gemini_api_key: str | None = None
     gemini_model: str = "gemini-3.6-flash"
+    openai_api_key: str | None = None
+    openai_model: str = "gpt-5.6-sol"
     connectsafely_api_key: str | None = None
     connectsafely_base_url: str = "https://api.connectsafely.ai"
     connectsafely_account_id: str | None = None

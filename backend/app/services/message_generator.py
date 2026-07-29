@@ -1,8 +1,11 @@
-import httpx
 from pydantic import BaseModel, Field
 
 from app.core.config import Settings
 from app.models import CandidateProfile, Job, Recruiter
+from app.services.structured_ai import (
+    StructuredAIUnavailable,
+    generate_structured,
+)
 
 
 class MessageGenerationUnavailable(RuntimeError):
@@ -22,11 +25,6 @@ def generate_outreach_message(
     recruiter: Recruiter,
     extra_context: str | None,
 ) -> GeneratedOutreach:
-    if not settings.gemini_api_key:
-        raise MessageGenerationUnavailable(
-            "GEMINI_API_KEY is not configured. Add a fresh key locally and restart."
-        )
-
     prompt = (
         f"Candidate: {profile.name}\n"
         f"Resume:\n{profile.resume_text}\n"
@@ -39,42 +37,19 @@ def generate_outreach_message(
         f"Recipient activity: {recruiter.activity or 'Not supplied'}\n"
         f"Additional context: {extra_context or 'None'}"
     )
-    request_body = {
-        "systemInstruction": {
-            "parts": [
-                {
-                    "text": (
-                        "Write one original LinkedIn outreach message and a short optional InMail "
-                        "subject. Do not use a reusable template, brackets, placeholders, "
-                        "exaggerated claims, or generic praise. Keep the message between 70 and "
-                        "120 words. Reference the specific role and the candidate's most relevant "
-                        "evidence. Ask for a brief conversation or direction to the right person. "
-                        "The user will review and explicitly approve before sending."
-                    )
-                }
-            ]
-        },
-        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-        "generationConfig": {
-            "responseMimeType": "application/json",
-            "responseJsonSchema": GeneratedOutreach.model_json_schema(),
-        },
-    }
     try:
-        response = httpx.post(
+        return generate_structured(
+            settings,
+            GeneratedOutreach,
             (
-                "https://generativelanguage.googleapis.com/v1beta/models/"
-                f"{settings.gemini_model}:generateContent"
+                "Write one original LinkedIn outreach message and a short optional InMail "
+                "subject. Do not use a reusable template, brackets, placeholders, exaggerated "
+                "claims, or generic praise. Keep the message between 70 and 120 words. Reference "
+                "the specific role and the candidate's most relevant evidence. Ask for a brief "
+                "conversation or direction to the right person. The user will review and "
+                "explicitly approve before sending."
             ),
-            headers={"x-goog-api-key": settings.gemini_api_key},
-            json=request_body,
-            timeout=httpx.Timeout(60, connect=15),
+            prompt,
         )
-        response.raise_for_status()
-        payload = response.json()
-        text = payload["candidates"][0]["content"]["parts"][0]["text"]
-        return GeneratedOutreach.model_validate_json(text)
-    except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError) as exc:
-        raise MessageGenerationUnavailable(
-            "Gemini could not generate a valid outreach draft"
-        ) from exc
+    except StructuredAIUnavailable as exc:
+        raise MessageGenerationUnavailable(str(exc)) from exc

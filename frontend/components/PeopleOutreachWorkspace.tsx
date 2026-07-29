@@ -180,7 +180,7 @@ export function PeopleOutreachWorkspace({
         resume_text: resumeText,
         positioning: positioning || undefined,
       });
-      setNotice("Resume profile saved for Gemini personalization.");
+      setNotice("Resume profile saved for AI personalization.");
     });
   }
 
@@ -193,7 +193,7 @@ export function PeopleOutreachWorkspace({
         extra_context: extraContext.trim() || undefined,
       });
       setExtraContext("");
-      setNotice("Gemini created a unique LinkedIn draft for review.");
+      setNotice("Your configured AI provider created a unique LinkedIn draft.");
     });
   }
 
@@ -223,13 +223,15 @@ export function PeopleOutreachWorkspace({
 
       <div className="integration-grid">
         <article className="panel connection-card">
-          <span className={integrations?.gemini_configured ? "status-dot is-ready" : "status-dot"} />
+          <span className={integrations?.ai_configured ? "status-dot is-ready" : "status-dot"} />
           <div>
-            <h3>Gemini</h3>
+            <h3>
+              AI drafting · {integrations?.ai_provider?.toUpperCase() ?? "NOT CONFIGURED"}
+            </h3>
             <p>
-              {integrations?.gemini_configured
+              {integrations?.ai_configured
                 ? "Ready for company selection and personal drafts"
-                : "GEMINI_API_KEY is missing"}
+                : "Add a fresh Gemini or OpenAI Platform API key"}
             </p>
           </div>
         </article>
@@ -246,6 +248,8 @@ export function PeopleOutreachWorkspace({
             <p>
               {integrations?.connectsafely_account_connected
                 ? `Connected as ${integrations.connectsafely_account_name ?? "LinkedIn account"}`
+                : integrations?.connectsafely_error
+                  ? integrations.connectsafely_error
                 : integrations?.connectsafely_configured
                   ? "API key found; connect LinkedIn in ConnectSafely"
                   : "CONNECTSAFELY_API_KEY is missing"}
@@ -466,7 +470,7 @@ export function PeopleOutreachWorkspace({
       <div className="workflow__heading workflow__heading--spaced" id="outreach">
         <div>
           <p className="eyebrow">Approval-first outreach</p>
-          <h2>Gemini drafts. You approve. ConnectSafely sends.</h2>
+          <h2>AI drafts. You approve. ConnectSafely sends.</h2>
         </div>
         <span>
           {capabilities?.sent_today ?? 0}/{capabilities?.daily_limit ?? 100} sent today
@@ -505,7 +509,7 @@ export function PeopleOutreachWorkspace({
         <form className="panel form-stack" onSubmit={generateMessage}>
           <div className="panel__heading">
             <h3>2. Generate DM</h3>
-            <span>Gemini · no templates</span>
+            <span>{integrations?.ai_provider ?? "AI"} · no templates</span>
           </div>
           <label>
             Shortlisted person
@@ -551,7 +555,7 @@ export function PeopleOutreachWorkspace({
           <button
             className="button button--primary"
             disabled={
-              busy === "generate" || !profile || !integrations?.gemini_configured
+              busy === "generate" || !profile || !integrations?.ai_configured
             }
           >
             {busy === "generate" ? "Writing…" : "Generate unique draft"}

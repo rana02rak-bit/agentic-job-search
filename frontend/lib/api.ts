@@ -142,10 +142,14 @@ export interface DeliveryCapabilities {
 }
 
 export interface IntegrationStatus {
+  ai_provider: string;
+  ai_configured: boolean;
   gemini_configured: boolean;
+  openai_configured: boolean;
   connectsafely_configured: boolean;
   connectsafely_account_connected: boolean;
   connectsafely_account_name: string | null;
+  connectsafely_error: string | null;
   ready_for_contact_discovery: boolean;
   ready_for_linkedin_sending: boolean;
   missing: string[];
