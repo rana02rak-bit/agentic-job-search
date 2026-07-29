@@ -153,3 +153,53 @@ def test_invalid_outbound_ca_bundle_is_explained() -> None:
         )
 
     assert "could not be loaded" in str(exc_info.value)
+
+
+def test_account_status_retries_one_read_timeout(monkeypatch) -> None:
+    request = httpx.Request("GET", "https://api.connectsafely.ai/linkedin/account/status")
+    calls = 0
+
+    def flaky_request(*_args, **_kwargs) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise httpx.ReadTimeout("provider slow", request=request)
+        return response(
+            {
+                "id": "acc-1",
+                "status": "AVAILABLE",
+                "enabled": True,
+                "hasTokens": True,
+            }
+        )
+
+    monkeypatch.setattr("app.services.connectsafely.httpx.request", flaky_request)
+
+    account = get_account_status(Settings(connectsafely_api_key="test-key"))
+
+    assert calls == 2
+    assert account.connected is True
+
+
+def test_send_does_not_retry_read_timeout(monkeypatch) -> None:
+    request = httpx.Request(
+        "POST",
+        "https://api.connectsafely.ai/linkedin/conversations/send",
+    )
+    calls = 0
+
+    def timeout_request(*_args, **_kwargs) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        raise httpx.ReadTimeout("provider slow", request=request)
+
+    monkeypatch.setattr("app.services.connectsafely.httpx.request", timeout_request)
+
+    with pytest.raises(ConnectSafelyUnavailable):
+        send_linkedin_message(
+            Settings(connectsafely_api_key="test-key"),
+            "https://www.linkedin.com/in/asha-rao",
+            "Hello Asha",
+        )
+
+    assert calls == 1

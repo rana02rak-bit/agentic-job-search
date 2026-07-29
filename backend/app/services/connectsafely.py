@@ -91,24 +91,41 @@ def _request(
     *,
     json: dict[str, Any] | None = None,
     params: dict[str, Any] | None = None,
+    retry_on_read_timeout: bool = False,
 ) -> dict[str, Any]:
-    try:
-        response = httpx.request(
-            method,
-            f"{settings.connectsafely_base_url.rstrip('/')}{path}",
-            headers=_headers(settings),
-            json=json,
-            params=params,
-            timeout=httpx.Timeout(45, connect=15),
-            verify=_ssl_context(settings),
-            trust_env=True,
-        )
-    except httpx.ConnectError as exc:
-        raise ConnectSafelyUnavailable(_connection_error_message(exc)) from exc
-    except httpx.HTTPError as exc:
-        raise ConnectSafelyUnavailable(
-            f"Could not reach ConnectSafely: {exc.__class__.__name__}"
-        ) from exc
+    attempts = 2 if retry_on_read_timeout else 1
+    for attempt in range(attempts):
+        try:
+            response = httpx.request(
+                method,
+                f"{settings.connectsafely_base_url.rstrip('/')}{path}",
+                headers=_headers(settings),
+                json=json,
+                params=params,
+                timeout=httpx.Timeout(connect=15, read=90, write=30, pool=15),
+                verify=_ssl_context(settings),
+                trust_env=True,
+            )
+            break
+        except httpx.ReadTimeout as exc:
+            if attempt + 1 < attempts:
+                continue
+            if not retry_on_read_timeout:
+                raise ConnectSafelyUnavailable(
+                    "ConnectSafely did not confirm the response before timeout. "
+                    "The request was not retried to prevent a duplicate LinkedIn message; "
+                    "check the conversation before trying again."
+                ) from exc
+            raise ConnectSafelyUnavailable(
+                "ConnectSafely did not respond after two read attempts. "
+                "The provider is temporarily slow or unavailable."
+            ) from exc
+        except httpx.ConnectError as exc:
+            raise ConnectSafelyUnavailable(_connection_error_message(exc)) from exc
+        except httpx.HTTPError as exc:
+            raise ConnectSafelyUnavailable(
+                f"Could not reach ConnectSafely: {exc.__class__.__name__}"
+            ) from exc
     if response.status_code >= 400:
         try:
             payload = response.json()
@@ -140,7 +157,13 @@ def get_account_status(settings: Settings) -> ConnectSafelyAccount:
         else None
     )
     data = _payload_data(
-        _request(settings, "GET", "/linkedin/account/status", params=params)
+        _request(
+            settings,
+            "GET",
+            "/linkedin/account/status",
+            params=params,
+            retry_on_read_timeout=True,
+        )
     )
     status = str(
         data.get("status")
@@ -283,6 +306,7 @@ def discover_contacts(
         "POST",
         "/linkedin/search/people",
         json=body,
+        retry_on_read_timeout=True,
     )
     contacts: list[DiscoveredContact] = []
     seen: set[str] = set()
