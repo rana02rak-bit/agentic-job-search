@@ -30,6 +30,21 @@ def recruiter_query():
     )
 
 
+def saved_people_for_company(
+    db: DbSession,
+    company_id: int,
+    limit: int,
+) -> list[Recruiter]:
+    return list(
+        db.scalars(
+            recruiter_query()
+            .where(Recruiter.company_id == company_id)
+            .order_by(Recruiter.reply_probability.desc(), Recruiter.name)
+            .limit(limit)
+        ).all()
+    )
+
+
 @router.get("", response_model=list[RecruiterRead])
 def list_recruiters(
     db: DbSession,
@@ -96,14 +111,7 @@ def discover_recruiters(
     try:
         discovered = discover_contacts(get_settings(), company, job, payload.limit)
     except ConnectSafelyUnavailable as exc:
-        saved_people = list(
-            db.scalars(
-                recruiter_query()
-                .where(Recruiter.company_id == company.id)
-                .order_by(Recruiter.reply_probability.desc(), Recruiter.name)
-                .limit(payload.limit)
-            ).all()
-        )
+        saved_people = saved_people_for_company(db, company.id, payload.limit)
         if not saved_people:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
         return ContactDiscoveryResult(
@@ -118,6 +126,21 @@ def discover_recruiters(
                 f"Showing {len(saved_people)} people already saved for {company.name}."
             ),
         )
+    if not discovered:
+        saved_people = saved_people_for_company(db, company.id, payload.limit)
+        if saved_people:
+            return ContactDiscoveryResult(
+                company_id=company.id,
+                discovered=0,
+                stored=0,
+                skipped_duplicates=0,
+                people=saved_people,
+                used_saved_people=True,
+                warning=(
+                    f"No new LinkedIn matches returned. Showing {len(saved_people)} people "
+                    f"already saved for {company.name}."
+                ),
+            )
 
     stored_ids: list[int] = []
     result_ids: list[int] = []

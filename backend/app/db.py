@@ -66,6 +66,9 @@ def _migrate_existing_schema() -> None:
                 text("ALTER TABLE recruiters ALTER COLUMN linkedin_url DROP NOT NULL")
             )
             connection.execute(
+                text("ALTER TABLE outreach_messages ALTER COLUMN job_id DROP NOT NULL")
+            )
+            connection.execute(
                 text(
                     "CREATE UNIQUE INDEX IF NOT EXISTS uq_recruiter_company_email_idx "
                     "ON recruiters (company_id, email) WHERE email IS NOT NULL"

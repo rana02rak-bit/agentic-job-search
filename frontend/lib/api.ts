@@ -112,7 +112,7 @@ export interface CandidateProfile {
 export interface OutreachMessage {
   id: number;
   recruiter_id: number;
-  job_id: number;
+  job_id: number | null;
   subject: string | null;
   recipient_email: string | null;
   body: string;
@@ -127,7 +127,7 @@ export interface OutreachMessage {
   sent_at: string | null;
   replied_at: string | null;
   recruiter: Recruiter;
-  job: Job;
+  job: Job | null;
 }
 
 export interface DeliveryCapabilities {
@@ -280,7 +280,6 @@ export const api = {
     request<IntegrationStatus>("/api/integrations/status"),
   generateOutreach: (payload: {
     recruiter_id: number;
-    job_id: number;
     extra_context?: string;
   }) =>
     request<OutreachMessage>("/api/outreach/messages", {

@@ -228,7 +228,11 @@ class OutreachMessage(Base):
     recruiter_id: Mapped[int] = mapped_column(
         ForeignKey("recruiters.id", ondelete="CASCADE"), index=True
     )
-    job_id: Mapped[int] = mapped_column(ForeignKey("jobs.id", ondelete="CASCADE"), index=True)
+    job_id: Mapped[int | None] = mapped_column(
+        ForeignKey("jobs.id", ondelete="SET NULL"),
+        index=True,
+        nullable=True,
+    )
     subject: Mapped[str | None] = mapped_column(String(240))
     recipient_email: Mapped[str | None] = mapped_column(String(320), index=True)
     body: Mapped[str] = mapped_column(Text)
@@ -246,7 +250,7 @@ class OutreachMessage(Base):
     replied_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     recruiter: Mapped[Recruiter] = relationship(back_populates="outreach_messages")
-    job: Mapped[Job] = relationship(back_populates="outreach_messages")
+    job: Mapped[Job | None] = relationship(back_populates="outreach_messages")
 
 
 class DiscoveryRun(Base):

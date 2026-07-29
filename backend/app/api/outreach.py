@@ -10,6 +10,7 @@ from app.core.config import get_settings
 from app.core.dependencies import DbSession
 from app.models import (
     CandidateProfile,
+    Company,
     Job,
     OutreachMessage,
     OutreachStatus,
@@ -104,18 +105,22 @@ def generate_message(
             status_code=409,
             detail="Save Rahul's resume profile before generating a message",
         )
-    recruiter = db.get(Recruiter, payload.recruiter_id)
-    job = db.scalar(
-        select(Job).options(selectinload(Job.company)).where(Job.id == payload.job_id)
+    recruiter = db.scalar(
+        select(Recruiter)
+        .options(selectinload(Recruiter.shortlist))
+        .where(Recruiter.id == payload.recruiter_id)
     )
     if not recruiter:
         raise HTTPException(status_code=404, detail="Person not found")
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
-    if recruiter.company_id != job.company_id:
-        raise HTTPException(
-            status_code=400,
-            detail="The person and job must belong to the same company",
+    company = db.get(Company, recruiter.company_id)
+    if not company:
+        raise HTTPException(status_code=404, detail="Company not found")
+    job = None
+    if recruiter.shortlist and recruiter.shortlist.job_id:
+        job = db.scalar(
+            select(Job)
+            .options(selectinload(Job.company))
+            .where(Job.id == recruiter.shortlist.job_id)
         )
     if not recruiter.linkedin_url:
         raise HTTPException(
@@ -126,6 +131,7 @@ def generate_message(
         generated = generate_outreach_message(
             get_settings(),
             profile,
+            company,
             job,
             recruiter,
             payload.extra_context,
@@ -135,7 +141,7 @@ def generate_message(
 
     message = OutreachMessage(
         recruiter_id=recruiter.id,
-        job_id=job.id,
+        job_id=job.id if job else None,
         subject=generated.subject,
         body=generated.body,
         rationale=generated.rationale,

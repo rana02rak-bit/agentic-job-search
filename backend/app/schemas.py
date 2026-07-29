@@ -281,7 +281,6 @@ class CandidateProfileRead(BaseModel):
 
 class OutreachGenerateRequest(BaseModel):
     recruiter_id: int
-    job_id: int
     extra_context: str | None = Field(default=None, max_length=5000)
 
 
@@ -295,7 +294,7 @@ class OutreachRead(BaseModel):
 
     id: int
     recruiter_id: int
-    job_id: int
+    job_id: int | None
     subject: str | None
     recipient_email: str | None
     body: str
@@ -310,7 +309,7 @@ class OutreachRead(BaseModel):
     sent_at: datetime | None
     replied_at: datetime | None
     recruiter: RecruiterRead
-    job: JobRead
+    job: JobRead | None
 
 
 class DeliveryCapabilities(BaseModel):

@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useState } from "react";
 import {
   api,
   CandidateProfile,
@@ -57,7 +57,6 @@ export function PeopleOutreachWorkspace({
     "AI product, Founder's Office, P2P transformation, consumer internet, and high-ownership roles.",
   );
   const [selectedPersonId, setSelectedPersonId] = useState("");
-  const [selectedJobId, setSelectedJobId] = useState("");
   const [shortlistJobIds, setShortlistJobIds] = useState<Record<number, string>>({});
   const [selectedPeopleIds, setSelectedPeopleIds] = useState<number[]>([]);
   const [extraContext, setExtraContext] = useState("");
@@ -130,14 +129,6 @@ export function PeopleOutreachWorkspace({
   const watchlist = companies.filter((company) => company.is_watchlisted);
   const shortlisted = people.filter(
     (person) => person.is_shortlisted && Boolean(person.linkedin_url),
-  );
-  const selectedPerson = people.find((person) => person.id === Number(selectedPersonId));
-  const selectedCompanyJobs = useMemo(
-    () =>
-      selectedPerson
-        ? jobs.filter((job) => job.company_id === selectedPerson.company_id)
-        : [],
-    [jobs, selectedPerson],
   );
   const discoveryJobs = jobs.filter(
     (job) => job.company_id === Number(discoveryCompanyId),
@@ -233,7 +224,6 @@ export function PeopleOutreachWorkspace({
     await runAction("generate", async () => {
       await api.generateOutreach({
         recruiter_id: Number(selectedPersonId),
-        job_id: Number(selectedJobId),
         extra_context: extraContext.trim() || undefined,
       });
       setExtraContext("");
@@ -609,10 +599,7 @@ export function PeopleOutreachWorkspace({
             Shortlisted person
             <select
               value={selectedPersonId}
-              onChange={(event) => {
-                setSelectedPersonId(event.target.value);
-                setSelectedJobId("");
-              }}
+              onChange={(event) => setSelectedPersonId(event.target.value)}
               required
             >
               <option value="">Choose person</option>
@@ -623,21 +610,10 @@ export function PeopleOutreachWorkspace({
               ))}
             </select>
           </label>
-          <label>
-            Job
-            <select
-              value={selectedJobId}
-              onChange={(event) => setSelectedJobId(event.target.value)}
-              required
-            >
-              <option value="">Choose job</option>
-              {selectedCompanyJobs.map((job) => (
-                <option key={job.id} value={job.id}>
-                  {job.title}
-                </option>
-              ))}
-            </select>
-          </label>
+          <p className="helper">
+            The company and recipient context are selected automatically. No job selection is
+            required.
+          </p>
           <label>
             Extra context
             <textarea
@@ -688,9 +664,16 @@ export function PeopleOutreachWorkspace({
           <article className="message-card" key={message.id}>
             <div className="message-card__meta">
               <div>
-                <p>{message.job.company.name}</p>
+                <p>
+                  {message.job?.company.name ??
+                    companies.find(
+                      (company) => company.id === message.recruiter.company_id,
+                    )?.name ??
+                    "Company outreach"}
+                </p>
                 <h3>
-                  {message.recruiter.name} · {message.job.title}
+                  {message.recruiter.name}
+                  {message.job ? ` · ${message.job.title}` : " · Company conversation"}
                 </h3>
               </div>
               <span className={`status-badge status-badge--${message.status.toLowerCase()}`}>

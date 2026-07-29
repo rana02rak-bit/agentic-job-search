@@ -235,6 +235,97 @@ def test_contact_discovery_reuses_saved_people_during_provider_outage(
     assert "Showing 1 people already saved" in result["warning"]
 
 
+def test_contact_discovery_reuses_saved_people_when_provider_returns_zero(
+    monkeypatch,
+) -> None:
+    company = client.post(
+        "/api/companies",
+        json={"name": "Empty Search Company", "priority": "HIGH"},
+    ).json()
+    saved_person = client.post(
+        "/api/recruiters",
+        json={
+            "company_id": company["id"],
+            "name": "Existing Talent Partner",
+            "linkedin_url": "https://www.linkedin.com/in/existing-talent-partner-test",
+            "designation": "Talent Partner",
+        },
+    ).json()
+    monkeypatch.setattr(
+        "app.api.recruiters.discover_contacts",
+        lambda *_args: [],
+    )
+
+    response = client.post(
+        "/api/recruiters/discover",
+        json={"company_id": company["id"], "limit": 5},
+    )
+
+    assert response.status_code == 200
+    result = response.json()
+    assert result["used_saved_people"] is True
+    assert result["people"][0]["id"] == saved_person["id"]
+    assert "No new LinkedIn matches returned" in result["warning"]
+
+
+def test_generates_company_outreach_without_job_choice(monkeypatch) -> None:
+    company = client.post(
+        "/api/companies",
+        json={"name": "Jobless Outreach Company", "priority": "HIGH"},
+    ).json()
+    person = client.post(
+        "/api/recruiters",
+        json={
+            "company_id": company["id"],
+            "name": "Company Recruiter",
+            "linkedin_url": "https://www.linkedin.com/in/company-recruiter-test",
+            "designation": "Recruiter",
+        },
+    ).json()
+    shortlist_response = client.post(
+        f"/api/recruiters/{person['id']}/shortlist",
+        json={},
+    )
+    assert shortlist_response.status_code == 200
+    profile_response = client.put(
+        "/api/outreach/profile",
+        json={
+            "name": "Rahul Ranjan",
+            "resume_text": (
+                "Rahul has led AI product and procurement transformation work at Ola Electric "
+                "with measurable cost reduction and Founder's Office exposure. His earlier "
+                "experience includes product and strategy work across consumer internet firms."
+            ),
+            "positioning": "AI Product, Strategy and Founder's Office roles",
+        },
+    )
+    assert profile_response.status_code == 200
+    monkeypatch.setattr(
+        "app.api.outreach.generate_outreach_message",
+        lambda *_args: GeneratedOutreach(
+            subject="Product and AI opportunities",
+            body=(
+                "Hi, I am exploring product and AI opportunities at Jobless Outreach Company. "
+                "My recent work includes AI agents and procurement transformation at Ola "
+                "Electric. I would value a brief conversation or your direction to the right "
+                "person on the team."
+            ),
+            rationale="Uses company and candidate evidence without inventing a live role.",
+        ),
+    )
+
+    response = client.post(
+        "/api/outreach/messages",
+        json={"recruiter_id": person["id"]},
+    )
+
+    assert response.status_code == 201
+    result = response.json()
+    assert result["job_id"] is None
+    assert result["job"] is None
+    assert result["recruiter"]["id"] == person["id"]
+
+
 def test_ai_discovery_can_auto_pick_high_scoring_firms(monkeypatch) -> None:
     monkeypatch.setattr(
         "app.api.discovery.generate_company_suggestions",
