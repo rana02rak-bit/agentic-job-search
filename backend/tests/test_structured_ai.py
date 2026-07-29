@@ -1,11 +1,17 @@
 import pytest
+from pydantic import BaseModel
 
 from app.core.config import Settings
 from app.services.structured_ai import (
     StructuredAIUnavailable,
     ai_is_configured,
+    generate_structured,
     selected_ai_provider,
 )
+
+
+class ExampleResult(BaseModel):
+    answer: str
 
 
 def test_auto_provider_prefers_gemini_when_both_keys_exist() -> None:
@@ -41,3 +47,41 @@ def test_explicit_provider_requires_its_own_key() -> None:
 def test_invalid_provider_is_rejected() -> None:
     with pytest.raises(StructuredAIUnavailable):
         selected_ai_provider(Settings(ai_provider="unknown"))
+
+
+def test_gemini_uses_current_structured_output_format(monkeypatch) -> None:
+    captured: dict = {}
+
+    class Response:
+        status_code = 200
+
+        @staticmethod
+        def raise_for_status() -> None:
+            return None
+
+        @staticmethod
+        def json() -> dict:
+            return {
+                "candidates": [
+                    {"content": {"parts": [{"text": '{"answer":"working"}'}]}}
+                ]
+            }
+
+    def fake_post(*_args, **kwargs) -> Response:
+        captured["body"] = kwargs["json"]
+        return Response()
+
+    monkeypatch.setattr("app.services.structured_ai.httpx.post", fake_post)
+
+    result = generate_structured(
+        Settings(ai_provider="gemini", gemini_api_key="test-key"),
+        ExampleResult,
+        "System",
+        "User",
+    )
+
+    assert result.answer == "working"
+    generation_config = captured["body"]["generationConfig"]
+    assert generation_config["responseFormat"]["text"]["mimeType"] == "application/json"
+    assert generation_config["responseFormat"]["text"]["schema"]["type"] == "object"
+    assert "responseJsonSchema" not in generation_config

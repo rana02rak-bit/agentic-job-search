@@ -103,8 +103,12 @@ def _generate_with_gemini[StructuredResult: BaseModel](
         "systemInstruction": {"parts": [{"text": system_prompt}]},
         "contents": [{"role": "user", "parts": [{"text": user_prompt}]}],
         "generationConfig": {
-            "responseMimeType": "application/json",
-            "responseJsonSchema": response_type.model_json_schema(),
+            "responseFormat": {
+                "text": {
+                    "mimeType": "application/json",
+                    "schema": response_type.model_json_schema(),
+                }
+            },
         },
     }
     try:
@@ -121,6 +125,28 @@ def _generate_with_gemini[StructuredResult: BaseModel](
         payload = response.json()
         text = payload["candidates"][0]["content"]["parts"][0]["text"]
         return response_type.model_validate_json(text)
+    except httpx.HTTPStatusError as exc:
+        status = exc.response.status_code
+        if status in {401, 403}:
+            detail = (
+                "Gemini rejected the API key. Generate a fresh key in Google AI Studio "
+                "and confirm Gemini API access is enabled."
+            )
+        elif status == 404:
+            detail = (
+                f"Gemini model {settings.gemini_model} is not available to this key."
+            )
+        elif status == 429:
+            detail = "Gemini quota is exhausted or temporarily rate-limited."
+        elif status == 400:
+            detail = "Gemini rejected the generated request."
+        else:
+            detail = f"Gemini returned HTTP {status}."
+        raise StructuredAIUnavailable(detail) from exc
+    except httpx.ConnectError as exc:
+        raise StructuredAIUnavailable(
+            "Could not connect to Gemini. Check Docker networking, proxy, or TLS settings."
+        ) from exc
     except (
         httpx.HTTPError,
         KeyError,
@@ -130,6 +156,5 @@ def _generate_with_gemini[StructuredResult: BaseModel](
         ValidationError,
     ) as exc:
         raise StructuredAIUnavailable(
-            "Gemini rejected the request or returned invalid structured output. "
-            "Verify the local key and model access."
+            "Gemini returned invalid structured output."
         ) from exc
