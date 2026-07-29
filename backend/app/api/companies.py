@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import case, func, select
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import selectinload
 
 from app.core.dependencies import DbSession
 from app.models import Company, CompanySource
@@ -15,7 +16,7 @@ def list_companies(
     source: SourceValue | None = None,
     watchlisted: bool | None = None,
 ) -> list[Company]:
-    query = select(Company)
+    query = select(Company).options(selectinload(Company.ats_source))
     if source:
         query = query.where(Company.source == source.value)
     if watchlisted is not None:

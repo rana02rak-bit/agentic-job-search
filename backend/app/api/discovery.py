@@ -2,14 +2,33 @@ from datetime import UTC, datetime
 
 from fastapi import APIRouter, HTTPException
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 
 from app.core.config import get_settings
 from app.core.dependencies import DbSession
 from app.models import Company, CompanySource, DiscoveryRun, Priority
-from app.schemas import CompanyRead, DiscoveryRequest
+from app.schemas import CompanyRead, DiscoveryRequest, DiscoveryRunRead
 from app.services.ai_discovery import DiscoveryUnavailableError, generate_company_suggestions
+from app.services.ats.runner import run_ats_discovery
 
 router = APIRouter(prefix="/discovery", tags=["discovery"])
+
+
+@router.post("/sync", response_model=DiscoveryRunRead)
+def sync_live_jobs(db: DbSession) -> DiscoveryRun:
+    return run_ats_discovery(db)
+
+
+@router.get("/runs", response_model=list[DiscoveryRunRead])
+def list_discovery_runs(db: DbSession, limit: int = 10) -> list[DiscoveryRun]:
+    safe_limit = min(max(limit, 1), 50)
+    query = (
+        select(DiscoveryRun)
+        .options(selectinload(DiscoveryRun.source_runs))
+        .order_by(DiscoveryRun.started_at.desc())
+        .limit(safe_limit)
+    )
+    return list(db.scalars(query).all())
 
 
 @router.post("/suggest", response_model=list[CompanyRead])
