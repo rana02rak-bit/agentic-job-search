@@ -135,6 +135,8 @@ class SuggestionBatch(BaseModel):
 
 class DiscoveryRequest(BaseModel):
     count: int = Field(default=5, ge=1, le=10)
+    auto_shortlist: bool = False
+    minimum_score: int = Field(default=35, ge=0, le=50)
 
 
 class DiscoverySourceRunRead(BaseModel):
@@ -175,3 +177,100 @@ class DashboardStats(BaseModel):
     replies: int = 0
     referrals: int = 0
     interviews: int = 0
+
+
+class RecruiterCreate(BaseModel):
+    company_id: int
+    name: str = Field(min_length=2, max_length=160)
+    linkedin_url: HttpUrl
+    designation: str | None = Field(default=None, max_length=240)
+    activity: str | None = Field(default=None, max_length=1000)
+    mutuals: int = Field(default=0, ge=0, le=10000)
+
+    @field_validator("linkedin_url")
+    @classmethod
+    def require_linkedin_url(cls, value: HttpUrl) -> HttpUrl:
+        host = (value.host or "").casefold()
+        if host != "linkedin.com" and not host.endswith(".linkedin.com"):
+            raise ValueError("Use a linkedin.com profile URL")
+        return value
+
+
+class RecruiterRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    company_id: int
+    name: str
+    linkedin_url: str
+    designation: str | None
+    activity: str | None
+    mutuals: int
+    reply_probability: int | None
+    is_shortlisted: bool
+    shortlisted_job_id: int | None
+    created_at: datetime
+
+
+class ShortlistRequest(BaseModel):
+    job_id: int | None = None
+    note: str | None = Field(default=None, max_length=1000)
+
+
+class CandidateProfileUpdate(BaseModel):
+    name: str = Field(default="Rahul Ranjan", min_length=2, max_length=160)
+    resume_text: str = Field(min_length=100, max_length=50000)
+    positioning: str | None = Field(default=None, max_length=5000)
+
+
+class CandidateProfileRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    name: str
+    resume_text: str
+    positioning: str | None
+    updated_at: datetime
+
+
+class OutreachGenerateRequest(BaseModel):
+    recruiter_id: int
+    job_id: int
+    extra_context: str | None = Field(default=None, max_length=5000)
+
+
+class OutreachUpdate(BaseModel):
+    body: str = Field(min_length=20, max_length=2000)
+
+
+class OutreachRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    recruiter_id: int
+    job_id: int
+    body: str
+    rationale: str | None
+    status: str
+    delivery_mode: str
+    delivery_error: str | None
+    generated_at: datetime
+    approved_at: datetime | None
+    sent_at: datetime | None
+    replied_at: datetime | None
+    recruiter: RecruiterRead
+    job: JobRead
+
+
+class DeliveryCapabilities(BaseModel):
+    automatic_linkedin_send: bool
+    mode: str
+    daily_limit: int
+    sent_today: int
+    reason: str | None
+
+
+class OutreachAction(BaseModel):
+    message: OutreachRead
+    linkedin_url: str
+    automatic_send_available: bool

@@ -2,7 +2,7 @@ from fastapi import APIRouter
 from sqlalchemy import func, select
 
 from app.core.dependencies import DbSession
-from app.models import Company, Job, Recruiter
+from app.models import Company, Job, OutreachMessage, OutreachStatus, Recruiter
 from app.schemas import DashboardStats
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
@@ -20,4 +20,32 @@ def dashboard_stats(db: DbSession) -> DashboardStats:
         ),
         jobs_found=db.scalar(select(func.count()).select_from(Job)) or 0,
         recruiters_found=db.scalar(select(func.count()).select_from(Recruiter)) or 0,
+        messages_ready=(
+            db.scalar(
+                select(func.count())
+                .select_from(OutreachMessage)
+                .where(OutreachMessage.status == OutreachStatus.APPROVED.value)
+            )
+            or 0
+        ),
+        messages_sent=(
+            db.scalar(
+                select(func.count())
+                .select_from(OutreachMessage)
+                .where(
+                    OutreachMessage.status.in_(
+                        [OutreachStatus.SENT.value, OutreachStatus.REPLIED.value]
+                    )
+                )
+            )
+            or 0
+        ),
+        replies=(
+            db.scalar(
+                select(func.count())
+                .select_from(OutreachMessage)
+                .where(OutreachMessage.status == OutreachStatus.REPLIED.value)
+            )
+            or 0
+        ),
     )

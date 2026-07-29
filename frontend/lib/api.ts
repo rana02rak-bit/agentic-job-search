@@ -83,6 +83,53 @@ export interface DiscoveryRun {
   source_runs: DiscoverySourceRun[];
 }
 
+export interface Recruiter {
+  id: number;
+  company_id: number;
+  name: string;
+  linkedin_url: string;
+  designation: string | null;
+  activity: string | null;
+  mutuals: number;
+  reply_probability: number | null;
+  is_shortlisted: boolean;
+  shortlisted_job_id: number | null;
+  created_at: string;
+}
+
+export interface CandidateProfile {
+  id: number;
+  name: string;
+  resume_text: string;
+  positioning: string | null;
+  updated_at: string;
+}
+
+export interface OutreachMessage {
+  id: number;
+  recruiter_id: number;
+  job_id: number;
+  body: string;
+  rationale: string | null;
+  status: "DRAFT" | "APPROVED" | "SENT" | "REPLIED" | "REJECTED";
+  delivery_mode: string;
+  delivery_error: string | null;
+  generated_at: string;
+  approved_at: string | null;
+  sent_at: string | null;
+  replied_at: string | null;
+  recruiter: Recruiter;
+  job: Job;
+}
+
+export interface DeliveryCapabilities {
+  automatic_linkedin_send: boolean;
+  mode: string;
+  daily_limit: number;
+  sent_today: number;
+  reason: string | null;
+}
+
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -108,6 +155,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export const api = {
   companies: () => request<Company[]>("/api/companies"),
   jobs: () => request<Job[]>("/api/jobs?today_only=true"),
+  allJobs: () => request<Job[]>("/api/jobs"),
   stats: () => request<DashboardStats>("/api/dashboard/stats"),
   discoveryRuns: (limit = 5) =>
     request<DiscoveryRun[]>(`/api/discovery/runs?limit=${limit}`),
@@ -130,10 +178,14 @@ export const api = {
     request<void>(`/api/companies/${id}`, {
       method: "DELETE",
     }),
-  discover: (count = 5) =>
+  discover: (count = 5, autoShortlist = false) =>
     request<Company[]>("/api/discovery/suggest", {
       method: "POST",
-      body: JSON.stringify({ count }),
+      body: JSON.stringify({
+        count,
+        auto_shortlist: autoShortlist,
+        minimum_score: 35,
+      }),
     }),
   syncJobs: () =>
     request<DiscoveryRun>("/api/discovery/sync", {
@@ -147,5 +199,67 @@ export const api = {
   removeAtsSource: (companyId: number) =>
     request<void>(`/api/companies/${companyId}/ats-source`, {
       method: "DELETE",
+    }),
+  recruiters: () => request<Recruiter[]>("/api/recruiters"),
+  addRecruiter: (payload: {
+    company_id: number;
+    name: string;
+    linkedin_url: string;
+    designation?: string;
+    activity?: string;
+    mutuals?: number;
+  }) =>
+    request<Recruiter>("/api/recruiters", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  shortlistRecruiter: (id: number, jobId?: number) =>
+    request<Recruiter>(`/api/recruiters/${id}/shortlist`, {
+      method: "POST",
+      body: JSON.stringify({ job_id: jobId }),
+    }),
+  removeRecruiterShortlist: (id: number) =>
+    request<void>(`/api/recruiters/${id}/shortlist`, {
+      method: "DELETE",
+    }),
+  profile: () => request<CandidateProfile>("/api/outreach/profile"),
+  saveProfile: (payload: { name: string; resume_text: string; positioning?: string }) =>
+    request<CandidateProfile>("/api/outreach/profile", {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    }),
+  outreachMessages: () => request<OutreachMessage[]>("/api/outreach/messages"),
+  outreachCapabilities: () =>
+    request<DeliveryCapabilities>("/api/outreach/capabilities"),
+  generateOutreach: (payload: {
+    recruiter_id: number;
+    job_id: number;
+    extra_context?: string;
+  }) =>
+    request<OutreachMessage>("/api/outreach/messages", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  editOutreach: (id: number, body: string) =>
+    request<OutreachMessage>(`/api/outreach/messages/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ body }),
+    }),
+  approveOutreach: (id: number) =>
+    request<{ message: OutreachMessage; linkedin_url: string; automatic_send_available: boolean }>(
+      `/api/outreach/messages/${id}/approve`,
+      { method: "POST" },
+    ),
+  autoSendOutreach: (id: number) =>
+    request<OutreachMessage>(`/api/outreach/messages/${id}/send`, {
+      method: "POST",
+    }),
+  markOutreachSent: (id: number) =>
+    request<OutreachMessage>(`/api/outreach/messages/${id}/mark-sent`, {
+      method: "POST",
+    }),
+  markOutreachReplied: (id: number) =>
+    request<OutreachMessage>(`/api/outreach/messages/${id}/mark-replied`, {
+      method: "POST",
     }),
 };

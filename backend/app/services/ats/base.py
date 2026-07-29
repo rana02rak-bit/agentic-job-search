@@ -1,9 +1,12 @@
+import ssl
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
 import httpx
+
+from app.core.config import get_settings
 
 
 class AtsFetchError(RuntimeError):
@@ -21,15 +24,30 @@ class AtsJob:
 
 def fetch_json(url: str, client: httpx.Client | None = None) -> Any:
     owns_client = client is None
+    ssl_context = ssl.create_default_context()
+    ca_bundle = get_settings().ats_ca_bundle
+    if ca_bundle:
+        try:
+            ssl_context.load_verify_locations(cafile=ca_bundle)
+        except (OSError, ssl.SSLError) as exc:
+            raise AtsFetchError(f"ATS_CA_BUNDLE could not be loaded: {exc}") from exc
     active_client = client or httpx.Client(
         timeout=httpx.Timeout(20.0),
         headers={"User-Agent": "RahulGPT-Job-Discovery/0.2"},
         follow_redirects=True,
+        verify=ssl_context,
     )
     try:
         response = active_client.get(url, headers={"Accept": "application/json"})
         response.raise_for_status()
         return response.json()
+    except httpx.ConnectError as exc:
+        if "CERTIFICATE_VERIFY_FAILED" in str(exc):
+            raise AtsFetchError(
+                "TLS certificate verification failed. Rebuild the backend to install current "
+                "root certificates; on a company network, add its root CA with ATS_CA_BUNDLE."
+            ) from exc
+        raise AtsFetchError(f"Could not read ATS board: {exc}") from exc
     except (httpx.HTTPError, ValueError) as exc:
         raise AtsFetchError(f"Could not read ATS board: {exc}") from exc
     finally:

@@ -73,6 +73,39 @@ roles matching the configured profile, and skips roles already seen on an earlie
 The current filters include Product Management, Chief of Staff, Founder's Office, Strategy, and
 Growth roles in Bangalore/Bengaluru, Gurgaon/Gurugram, Mumbai, Remote, or India.
 
+## End-to-end outreach workflow
+
+The People and Outreach workspace now provides:
+
+1. AI company discovery with optional automatic selection above the fit-score threshold.
+2. Manual company entry and verified ATS job ingestion.
+3. Recruiter, hiring-manager, or founder records with a reply-probability score.
+4. Job-specific people shortlisting.
+5. A saved Rahul resume/profile used for personalization.
+6. One original OpenAI-generated message per person and job.
+7. Draft editing, explicit approval, copy/open delivery, sent tracking, and reply tracking.
+8. A configurable daily outreach cap and audit timestamps in PostgreSQL.
+
+Add a real OpenAI Platform API key to `.env` to generate messages. Do not paste the key into chat.
+
+Automatic LinkedIn messaging is deliberately unavailable in `manual` mode. LinkedIn prohibits
+unauthorized bots that send messages, and LinkedIn API permissions beyond basic sign-in and
+posting generally require explicit partner approval. The application exposes the sender boundary
+and daily controls so an approved integration can be connected without changing the workflow.
+
+## ATS certificate errors
+
+The backend image installs the normal public root certificates. If an ATS sync still reports
+`CERTIFICATE_VERIFY_FAILED`, the company network is probably presenting a private inspection
+certificate. Export the approved company root certificate to
+`backend/certs/company-root-ca.pem`, set:
+
+```dotenv
+ATS_CA_BUNDLE=/app/certs/company-root-ca.pem
+```
+
+Then run `docker compose up --build`. Do not disable TLS verification.
+
 ## API overview
 
 | Method | Path | Purpose |
@@ -88,6 +121,13 @@ Growth roles in Bangalore/Bengaluru, Gurgaon/Gurugram, Mumbai, Remote, or India.
 | `DELETE` | `/api/companies/{id}/ats-source` | Disable an ATS board |
 | `POST` | `/api/discovery/sync` | Import matching live jobs |
 | `GET` | `/api/discovery/runs` | Read discovery run history |
+| `GET/POST` | `/api/recruiters` | List or add people |
+| `POST` | `/api/recruiters/{id}/shortlist` | Shortlist a person for a job |
+| `PUT` | `/api/outreach/profile` | Save Rahul's resume profile |
+| `POST` | `/api/outreach/messages` | Generate an original message |
+| `POST` | `/api/outreach/messages/{id}/approve` | Approve a reviewed message |
+| `POST` | `/api/outreach/messages/{id}/mark-sent` | Record manual delivery |
+| `GET` | `/api/outreach/capabilities` | Read delivery mode and daily limit |
 | `GET` | `/api/dashboard/stats` | Read dashboard totals |
 
 ## Tests

@@ -35,6 +35,14 @@ class AtsProvider(StrEnum):
     ASHBY = "ASHBY"
 
 
+class OutreachStatus(StrEnum):
+    DRAFT = "DRAFT"
+    APPROVED = "APPROVED"
+    SENT = "SENT"
+    REPLIED = "REPLIED"
+    REJECTED = "REJECTED"
+
+
 class Company(Base):
     __tablename__ = "companies"
 
@@ -99,6 +107,9 @@ class Job(Base):
     source_links: Mapped[list["JobSource"]] = relationship(
         back_populates="job", cascade="all, delete-orphan"
     )
+    outreach_messages: Mapped[list["OutreachMessage"]] = relationship(
+        back_populates="job", cascade="all, delete-orphan"
+    )
 
 
 class AtsSource(Base):
@@ -160,6 +171,72 @@ class Recruiter(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     company: Mapped[Company] = relationship(back_populates="recruiters")
+    shortlist: Mapped["RecruiterShortlist | None"] = relationship(
+        back_populates="recruiter", cascade="all, delete-orphan", uselist=False
+    )
+    outreach_messages: Mapped[list["OutreachMessage"]] = relationship(
+        back_populates="recruiter", cascade="all, delete-orphan"
+    )
+
+    @property
+    def is_shortlisted(self) -> bool:
+        return self.shortlist is not None
+
+    @property
+    def shortlisted_job_id(self) -> int | None:
+        return self.shortlist.job_id if self.shortlist else None
+
+
+class RecruiterShortlist(Base):
+    __tablename__ = "recruiter_shortlists"
+    __table_args__ = (UniqueConstraint("recruiter_id", name="uq_shortlist_recruiter"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    recruiter_id: Mapped[int] = mapped_column(
+        ForeignKey("recruiters.id", ondelete="CASCADE")
+    )
+    job_id: Mapped[int | None] = mapped_column(ForeignKey("jobs.id", ondelete="SET NULL"))
+    note: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    recruiter: Mapped[Recruiter] = relationship(back_populates="shortlist")
+    job: Mapped[Job | None] = relationship()
+
+
+class CandidateProfile(Base):
+    __tablename__ = "candidate_profiles"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(160), default="Rahul Ranjan")
+    resume_text: Mapped[str] = mapped_column(Text)
+    positioning: Mapped[str | None] = mapped_column(Text)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
+
+
+class OutreachMessage(Base):
+    __tablename__ = "outreach_messages"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    recruiter_id: Mapped[int] = mapped_column(
+        ForeignKey("recruiters.id", ondelete="CASCADE"), index=True
+    )
+    job_id: Mapped[int] = mapped_column(ForeignKey("jobs.id", ondelete="CASCADE"), index=True)
+    body: Mapped[str] = mapped_column(Text)
+    rationale: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(
+        String(32), default=OutreachStatus.DRAFT.value, index=True
+    )
+    delivery_mode: Mapped[str] = mapped_column(String(32), default="MANUAL")
+    delivery_error: Mapped[str | None] = mapped_column(Text)
+    generated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    replied_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    recruiter: Mapped[Recruiter] = relationship(back_populates="outreach_messages")
+    job: Mapped[Job] = relationship(back_populates="outreach_messages")
 
 
 class DiscoveryRun(Base):

@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import ats_sources, companies, dashboard, discovery, jobs
+from app.api import ats_sources, companies, dashboard, discovery, jobs, outreach, recruiters
 from app.core.config import get_settings
 from app.db import create_tables
 
@@ -32,6 +32,8 @@ app.include_router(companies.router, prefix="/api")
 app.include_router(ats_sources.router, prefix="/api")
 app.include_router(jobs.router, prefix="/api")
 app.include_router(discovery.router, prefix="/api")
+app.include_router(recruiters.router, prefix="/api")
+app.include_router(outreach.router, prefix="/api")
 app.include_router(dashboard.router, prefix="/api")
 
 

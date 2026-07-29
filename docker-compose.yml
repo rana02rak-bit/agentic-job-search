@@ -23,11 +23,16 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-5.6-luna}
       BACKEND_CORS_ORIGINS: ${BACKEND_CORS_ORIGINS:-http://localhost:3000}
+      ATS_CA_BUNDLE: ${ATS_CA_BUNDLE:-}
+      OUTREACH_DAILY_SEND_LIMIT: ${OUTREACH_DAILY_SEND_LIMIT:-10}
+      LINKEDIN_SEND_MODE: ${LINKEDIN_SEND_MODE:-manual}
     depends_on:
       postgres:
         condition: service_healthy
     ports:
       - "8000:8000"
+    volumes:
+      - ./backend/certs:/app/certs:ro
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
       interval: 5s
@@ -42,9 +47,12 @@ services:
       DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://rahulgpt:rahulgpt_local@postgres:5432/rahulgpt}
       DISCOVERY_RUN_HOUR: ${DISCOVERY_RUN_HOUR:-8}
       DISCOVERY_TIMEZONE: ${DISCOVERY_TIMEZONE:-Asia/Kolkata}
+      ATS_CA_BUNDLE: ${ATS_CA_BUNDLE:-}
     depends_on:
       backend:
         condition: service_healthy
+    volumes:
+      - ./backend/certs:/app/certs:ro
 
   frontend:
     build:

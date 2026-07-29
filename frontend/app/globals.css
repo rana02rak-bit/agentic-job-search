@@ -666,6 +666,311 @@ aside {
   padding: 0.4rem 0.6rem;
 }
 
+.workflow {
+  border-top: 1px solid var(--line);
+  margin: 0 auto;
+  max-width: min(90vw, 1340px);
+  padding: 70px 0 110px;
+}
+
+.workflow__heading {
+  align-items: end;
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 1.4rem;
+}
+
+.workflow__heading--spaced {
+  margin-top: 4.5rem;
+}
+
+.workflow__heading h2 {
+  font-size: clamp(1.7rem, 3vw, 2.5rem);
+  letter-spacing: -0.04em;
+  margin: 0;
+}
+
+.workflow__heading > span {
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.workflow-grid {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: minmax(300px, 0.8fr) minmax(0, 1.2fr);
+}
+
+.workflow-grid--three {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.panel {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 1.2rem;
+}
+
+.panel__heading {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 1rem;
+}
+
+.panel__heading h3 {
+  font-size: 1rem;
+  margin: 0;
+}
+
+.panel__heading span {
+  color: var(--muted);
+  font-size: 0.65rem;
+  text-transform: uppercase;
+}
+
+.form-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+}
+
+.form-stack label,
+.message-card label,
+.shortlist-control {
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 700;
+}
+
+.form-stack input,
+.form-stack select,
+.form-stack textarea,
+.message-card textarea,
+.shortlist-control select {
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  color: var(--ink);
+  display: block;
+  margin-top: 0.35rem;
+  min-height: 42px;
+  outline: none;
+  padding: 0.65rem;
+  width: 100%;
+}
+
+.form-stack textarea,
+.message-card textarea {
+  line-height: 1.5;
+  min-height: 84px;
+  resize: vertical;
+}
+
+.form-stack input:focus,
+.form-stack select:focus,
+.form-stack textarea:focus,
+.message-card textarea:focus {
+  border-color: #849f21;
+}
+
+.textarea--tall {
+  min-height: 210px !important;
+}
+
+.form-pair {
+  display: grid;
+  gap: 0.7rem;
+  grid-template-columns: 1fr 1fr;
+}
+
+.people-list {
+  display: grid;
+  gap: 0.65rem;
+  max-height: 600px;
+  overflow: auto;
+}
+
+.person-card {
+  align-items: center;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: minmax(0, 1fr) auto auto minmax(120px, auto);
+  padding: 0.85rem;
+}
+
+.person-card p {
+  color: #718215;
+  font-size: 0.62rem;
+  font-weight: 800;
+  margin-bottom: 0.25rem;
+  text-transform: uppercase;
+}
+
+.person-card h4 {
+  font-family: var(--font-display), sans-serif;
+  font-size: 0.9rem;
+  margin: 0 0 0.2rem;
+}
+
+.person-card span {
+  color: var(--muted);
+  font-size: 0.68rem;
+}
+
+.person-card > strong {
+  background: var(--acid);
+  border-radius: 99px;
+  font-size: 0.7rem;
+  padding: 0.5rem;
+}
+
+.person-card > a {
+  color: var(--ink);
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.shortlist-control select {
+  min-width: 150px;
+}
+
+.delivery-panel {
+  background: var(--ink);
+  color: white;
+}
+
+.delivery-panel .panel__heading span,
+.delivery-panel p,
+.delivery-panel small {
+  color: #c7c9bd;
+}
+
+.delivery-panel > strong {
+  display: block;
+  font-family: var(--font-display), sans-serif;
+  font-size: 1.15rem;
+  margin: 2rem 0 0.6rem;
+}
+
+.delivery-panel p {
+  font-size: 0.76rem;
+  line-height: 1.55;
+}
+
+.limit-meter {
+  background: #42443c;
+  border-radius: 99px;
+  height: 8px;
+  margin: 1.4rem 0 0.65rem;
+  overflow: hidden;
+}
+
+.limit-meter span {
+  background: var(--acid);
+  display: block;
+  height: 100%;
+}
+
+.helper {
+  color: var(--muted);
+  font-size: 0.68rem;
+  margin: 0;
+}
+
+.message-queue {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-top: 1rem;
+}
+
+.message-card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 1.2rem;
+}
+
+.message-card__meta {
+  align-items: start;
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 1rem;
+}
+
+.message-card__meta p {
+  color: #718215;
+  font-size: 0.62rem;
+  font-weight: 800;
+  margin-bottom: 0.3rem;
+  text-transform: uppercase;
+}
+
+.message-card__meta h3 {
+  font-size: 0.95rem;
+  margin: 0;
+}
+
+.message-card textarea {
+  min-height: 145px;
+}
+
+.message-rationale {
+  color: var(--muted);
+  font-size: 0.7rem;
+  line-height: 1.5;
+  margin: 0.8rem 0;
+}
+
+.message-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+  justify-content: flex-end;
+  margin-top: 0.8rem;
+}
+
+.status-badge {
+  background: var(--warm);
+  border-radius: 99px;
+  font-size: 0.62rem;
+  font-weight: 800;
+  padding: 0.35rem 0.55rem;
+}
+
+.status-badge--approved {
+  background: var(--acid);
+}
+
+.status-badge--sent {
+  background: #d9edff;
+}
+
+.status-badge--replied {
+  background: #d5f1df;
+}
+
+.workflow-notice {
+  background: #efffd1;
+  border: 1px solid #c9e689;
+  border-radius: 12px;
+  font-size: 0.8rem;
+  margin-bottom: 1.2rem;
+  padding: 0.8rem 1rem;
+}
+
+.workflow-notice--error {
+  background: #fff2eb;
+  border-color: #efc8b7;
+  color: var(--danger);
+}
+
 @media (max-width: 1050px) {
   .topbar {
     grid-template-columns: 1fr auto;
@@ -690,6 +995,11 @@ aside {
   aside {
     border-top: 1px solid var(--line);
     padding-top: 2rem;
+  }
+
+  .workflow-grid,
+  .workflow-grid--three {
+    grid-template-columns: 1fr;
   }
 }
 
@@ -729,5 +1039,26 @@ aside {
   .field--wide,
   .button--dark {
     grid-column: auto;
+  }
+
+  .workflow__heading {
+    align-items: start;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .form-pair,
+  .message-queue {
+    grid-template-columns: 1fr;
+  }
+
+  .person-card {
+    grid-template-columns: 1fr auto;
+  }
+
+  .person-card > a,
+  .person-card > .button,
+  .shortlist-control {
+    grid-column: 1 / -1;
   }
 }
