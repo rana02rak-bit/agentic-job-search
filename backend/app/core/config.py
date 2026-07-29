@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     discovery_run_hour: int = Field(default=8, ge=0, le=23)
     discovery_timezone: str = "Asia/Kolkata"
     ats_ca_bundle: str | None = None
+    outbound_ca_bundle: str | None = None
     outreach_daily_send_limit: int = Field(default=100, ge=1, le=500)
     backend_cors_origins: Annotated[list[str], NoDecode] = Field(
         default_factory=lambda: ["http://localhost:3000"]

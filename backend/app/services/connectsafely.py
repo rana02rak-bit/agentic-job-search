@@ -1,3 +1,4 @@
+import ssl
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlparse
@@ -40,6 +41,49 @@ def _headers(settings: Settings) -> dict[str, str]:
     }
 
 
+def _ssl_context(settings: Settings) -> ssl.SSLContext:
+    context = ssl.create_default_context()
+    ca_bundle = settings.outbound_ca_bundle or settings.ats_ca_bundle
+    if not ca_bundle:
+        return context
+    try:
+        context.load_verify_locations(cafile=ca_bundle)
+    except (OSError, ssl.SSLError) as exc:
+        raise ConnectSafelyUnavailable(
+            "The configured outbound CA bundle could not be loaded. "
+            "Check OUTBOUND_CA_BUNDLE and restart the backend."
+        ) from exc
+    return context
+
+
+def _connection_error_message(exc: httpx.ConnectError) -> str:
+    detail = str(exc).casefold()
+    if "certificate_verify_failed" in detail or "certificate verify failed" in detail:
+        return (
+            "ConnectSafely TLS verification failed. If your company network inspects HTTPS, "
+            "save its approved root certificate in backend/certs and set "
+            "OUTBOUND_CA_BUNDLE=/app/certs/company-root-ca.pem."
+        )
+    if (
+        "name or service not known" in detail
+        or "nodename nor servname" in detail
+        or "temporary failure in name resolution" in detail
+    ):
+        return (
+            "ConnectSafely DNS lookup failed inside Docker. Restart Docker Desktop and check "
+            "its DNS/network settings."
+        )
+    if "timed out" in detail or "timeout" in detail:
+        return (
+            "ConnectSafely connection timed out. Check the company firewall or configure "
+            "HTTPS_PROXY for the backend."
+        )
+    return (
+        "Could not establish a network connection to ConnectSafely. "
+        "Check Docker networking, firewall, proxy, and corporate CA settings."
+    )
+
+
 def _request(
     settings: Settings,
     method: str,
@@ -56,7 +100,11 @@ def _request(
             json=json,
             params=params,
             timeout=httpx.Timeout(45, connect=15),
+            verify=_ssl_context(settings),
+            trust_env=True,
         )
+    except httpx.ConnectError as exc:
+        raise ConnectSafelyUnavailable(_connection_error_message(exc)) from exc
     except httpx.HTTPError as exc:
         raise ConnectSafelyUnavailable(
             f"Could not reach ConnectSafely: {exc.__class__.__name__}"

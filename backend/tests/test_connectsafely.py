@@ -1,8 +1,10 @@
 import httpx
+import pytest
 
 from app.core.config import Settings
 from app.models import Company, Job
 from app.services.connectsafely import (
+    ConnectSafelyUnavailable,
     discover_contacts,
     get_account_status,
     send_linkedin_message,
@@ -112,3 +114,33 @@ def test_send_uses_current_conversations_endpoint(monkeypatch) -> None:
     assert captured["json"]["recipientProfileId"] == "asha-rao"
     assert message_id == "message-1"
     assert conversation_id == "urn:li:conversation:1"
+
+
+def test_connect_error_explains_corporate_tls_fix(monkeypatch) -> None:
+    request = httpx.Request("GET", "https://api.connectsafely.ai/linkedin/account/status")
+
+    def fail_request(*_args, **_kwargs) -> httpx.Response:
+        raise httpx.ConnectError(
+            "[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed",
+            request=request,
+        )
+
+    monkeypatch.setattr("app.services.connectsafely.httpx.request", fail_request)
+
+    with pytest.raises(ConnectSafelyUnavailable) as exc_info:
+        get_account_status(Settings(connectsafely_api_key="test-key"))
+
+    assert "OUTBOUND_CA_BUNDLE" in str(exc_info.value)
+    assert "disable TLS" not in str(exc_info.value)
+
+
+def test_invalid_outbound_ca_bundle_is_explained() -> None:
+    with pytest.raises(ConnectSafelyUnavailable) as exc_info:
+        get_account_status(
+            Settings(
+                connectsafely_api_key="test-key",
+                outbound_ca_bundle="/missing/company-root-ca.pem",
+            )
+        )
+
+    assert "could not be loaded" in str(exc_info.value)

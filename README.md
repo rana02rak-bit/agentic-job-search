@@ -135,9 +135,14 @@ inspection, export the approved company root certificate to
 
 ```dotenv
 ATS_CA_BUNDLE=/app/certs/company-root-ca.pem
+OUTBOUND_CA_BUNDLE=/app/certs/company-root-ca.pem
 ```
 
-Then rebuild. Do not disable TLS verification.
+`ATS_CA_BUNDLE` covers job-board sync. `OUTBOUND_CA_BUNDLE` covers ConnectSafely. If only
+`ATS_CA_BUNDLE` is present, ConnectSafely reuses it for backward compatibility.
+
+If the company network requires an explicit proxy, also set `HTTPS_PROXY` in `.env`. Then rebuild.
+Do not disable TLS verification.
 
 ## API overview
 

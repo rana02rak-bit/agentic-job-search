@@ -13,6 +13,7 @@ Then set this inside the project `.env`:
 
 ```dotenv
 ATS_CA_BUNDLE=/app/certs/company-root-ca.pem
+OUTBOUND_CA_BUNDLE=/app/certs/company-root-ca.pem
 ```
 
 Rebuild the backend after changing the certificate:

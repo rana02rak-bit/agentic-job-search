@@ -30,6 +30,10 @@ services:
       CONNECTSAFELY_BASE_URL: ${CONNECTSAFELY_BASE_URL:-https://api.connectsafely.ai}
       BACKEND_CORS_ORIGINS: ${BACKEND_CORS_ORIGINS:-http://localhost:3000}
       ATS_CA_BUNDLE: ${ATS_CA_BUNDLE:-}
+      OUTBOUND_CA_BUNDLE: ${OUTBOUND_CA_BUNDLE:-}
+      HTTP_PROXY: ${HTTP_PROXY:-}
+      HTTPS_PROXY: ${HTTPS_PROXY:-}
+      NO_PROXY: ${NO_PROXY:-localhost,127.0.0.1,postgres,backend}
       OUTREACH_DAILY_SEND_LIMIT: ${OUTREACH_DAILY_SEND_LIMIT:-100}
     depends_on:
       postgres:
