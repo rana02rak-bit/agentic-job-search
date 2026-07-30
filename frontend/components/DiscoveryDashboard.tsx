@@ -12,6 +12,7 @@ import {
 } from "@/lib/api";
 import { CompanyCard } from "./CompanyCard";
 import { MetricCard } from "./MetricCard";
+import { PeopleOutreachWorkspace } from "./PeopleOutreachWorkspace";
 
 const emptyStats: DashboardStats = {
   companies: 0,
@@ -148,6 +149,21 @@ export function DiscoveryDashboard() {
     }
   }
 
+  async function autoPickCompanies() {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.discover(10, true);
+      await load();
+    } catch (caught) {
+      setError(
+        caught instanceof Error ? caught.message : "Could not automatically pick companies.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function syncJobs() {
     setBusy(true);
     setError(null);
@@ -216,6 +232,9 @@ export function DiscoveryDashboard() {
           </button>
           <button className="button button--secondary" onClick={discover} disabled={busy}>
             Find AI companies
+          </button>
+          <button className="button button--secondary" onClick={autoPickCompanies} disabled={busy}>
+            Auto-pick best firms
           </button>
           {latestRun && (
             <span className={`run-status run-status--${latestRun.status.toLowerCase()}`}>
@@ -397,6 +416,7 @@ export function DiscoveryDashboard() {
           </div>
         </aside>
       </section>
+      <PeopleOutreachWorkspace companies={companies} onChanged={load} />
     </main>
   );
 }

@@ -49,14 +49,26 @@ def suggest_companies(
         for item in batch.suggestions:
             if item.name.casefold() in existing_keys:
                 continue
+            total_score = (
+                item.funding_score
+                + item.hiring_score
+                + item.ai_score
+                + item.location_score
+                + item.role_match_score
+            )
+            auto_selected = payload.auto_shortlist and total_score >= payload.minimum_score
             company = Company(
                 name=item.name,
                 website=item.website,
                 industry=item.industry,
                 location=item.location,
                 source=CompanySource.AI.value,
-                priority=Priority.MEDIUM.value,
-                is_watchlisted=False,
+                priority=(
+                    Priority.HIGH.value
+                    if auto_selected and total_score >= 40
+                    else Priority.MEDIUM.value
+                ),
+                is_watchlisted=auto_selected,
                 funding_score=item.funding_score,
                 hiring_score=item.hiring_score,
                 ai_score=item.ai_score,

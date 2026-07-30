@@ -1,33 +1,86 @@
 # RahulGPT — Agentic Job Search
 
-RahulGPT is a local-first job intelligence workspace. The current build provides a usable company
-watchlist, five-factor company scoring, AI-assisted company suggestions, verified job ingestion
-from public ATS boards, and a dashboard. Manual watchlist and ATS discovery work without an OpenAI
-API key.
+RahulGPT is a local-first job-search operating system. It finds and scores target companies,
+imports verified jobs, searches LinkedIn for relevant people, creates job-specific messages with
+Gemini or OpenAI, and sends only drafts Rahul explicitly approves.
 
-## Current features
+## Product objective and current progress
 
-- Add, reprioritize, and remove target companies.
-- Keep user-added companies as a first-class watchlist.
-- Store companies, jobs, recruiters, and discovery runs in PostgreSQL.
-- Score companies across funding, hiring, AI relevance, location, and role match (50 points).
-- Generate structured AI suggestions using the OpenAI Responses API.
-- Connect watchlist companies to Greenhouse, Lever, or Ashby job boards.
-- Import only Rahul's target roles and locations, with external-ID and URL deduplication.
-- Keep discovery run history and isolate failures to the affected company source.
-- Run ATS discovery automatically each day at 08:00 Asia/Kolkata.
-- Show the current pipeline in a responsive Next.js dashboard.
-- Run the full stack locally with Docker Compose.
+The objective is:
 
-The application does **not** automate LinkedIn messages. Later outreach modules will prepare a
-draft and stop at the approval/send boundary.
+```text
+Auto-pick companies → find live jobs → find relevant people → shortlist
+→ AI draft → Rahul reviews → Rahul approves → ConnectSafely sends
+→ track sent messages and replies
+```
 
-## Quick start
+Working now:
 
-Prerequisites: Docker Desktop with Docker Compose.
+- PostgreSQL storage for companies, jobs, people, shortlists, messages, and discovery runs.
+- Manual target-company watchlist plus AI company suggestions and five-factor scoring.
+- Greenhouse, Lever, and Ashby job ingestion with role/location filtering and deduplication.
+- Daily ATS sync at 08:00 Asia/Kolkata.
+- ConnectSafely LinkedIn people search by target company and job.
+- Reply-probability scoring and job-specific shortlisting.
+- Non-template LinkedIn drafts based on Rahul's resume, job, and recipient.
+- Preview, edit, explicit approval, ConnectSafely delivery, and reply tracking.
+- A hard local limit of 100 LinkedIn sends per day.
+
+Not yet included: automatic reply detection, referral/interview objects, and cloud deployment.
+
+## Security: rotate the pasted keys first
+
+Any API key pasted into chat must be considered exposed. Regenerate the selected AI-provider key
+and the ConnectSafely key before using this app. Never commit `.env`.
+
+The app supports Gemini and OpenAI Platform keys. `AI_PROVIDER=auto` chooses Gemini first when both
+exist; the terminal configurator writes an explicit provider. Gemini uses the current stable
+`gemini-3.6-flash` model; rerunning the configurator migrates older local model settings.
+
+## Configure entirely from Terminal
+
+Prerequisite: Docker Desktop is open and running.
+
+From the repository root:
 
 ```bash
-cp .env.example .env
+bash scripts/configure-local.sh
+```
+
+The script asks for both fresh keys without showing them on screen, writes `.env`, and restricts the
+file to your user account. It configures:
+
+```dotenv
+AI_PROVIDER=openai
+GEMINI_API_KEY=
+GEMINI_MODEL=gemini-3.6-flash
+OPENAI_API_KEY=
+OPENAI_MODEL=gpt-5.6-sol
+CONNECTSAFELY_API_KEY=
+CONNECTSAFELY_ACCOUNT_ID=
+OUTREACH_DAILY_SEND_LIMIT=100
+```
+
+`CONNECTSAFELY_ACCOUNT_ID` is optional when the ConnectSafely workspace has one default LinkedIn
+account. If it has multiple accounts, add the desired account ID to `.env`.
+
+The MCP URL and the REST API use the same ConnectSafely credential. This application uses the
+server-side REST API because it is the provider's recommended production integration and keeps the
+secret out of the browser.
+
+## Connect LinkedIn
+
+In the ConnectSafely dashboard, connect the LinkedIn account that will send messages. The app checks
+`GET /linkedin/account/status`; a valid API key alone is not enough if no LinkedIn account is
+connected.
+
+Normal DMs generally require a first-degree connection. Messages to non-connections can require
+InMail/Premium access. The provider decides the available channel when the approved message is
+sent.
+
+## Run the app
+
+```bash
 docker compose up --build
 ```
 
@@ -35,106 +88,93 @@ Open:
 
 - Dashboard: <http://localhost:3000>
 - API docs: <http://localhost:8000/docs>
-- Health check: <http://localhost:8000/health>
+- Backend health: <http://localhost:8000/health>
 
-In another terminal, seed the initial watchlist:
+See live backend progress and provider errors:
+
+```bash
+docker compose logs -f backend
+```
+
+In a second terminal, seed the initial watchlist if needed:
 
 ```bash
 docker compose run --rm backend python -m app.seed
 ```
 
-## OpenAI configuration
+## Daily workflow
 
-Create a new OpenAI Platform API key and set it only in your local `.env`:
+1. Use **Discover with AI** to auto-pick companies or add a firm manually.
+2. Connect the firm's Greenhouse, Lever, or Ashby board and run **Sync live jobs**.
+3. In **People intelligence**, select a company and optional job, then choose
+   **Find recruiters and managers**.
+4. Review the people found and shortlist someone against a job.
+5. Save Rahul's updated resume/profile once.
+6. Generate a unique draft and edit it.
+7. Click **Approve & send LinkedIn DM**. This is the final confirmation and send action.
 
-```dotenv
-OPENAI_API_KEY=your_new_key
-OPENAI_MODEL=gpt-5.6-luna
-```
-
-Never commit `.env` or paste API keys into chat. The previously shared `AIza...` credential is a
-Google API key, not an OpenAI API key, and should be revoked or restricted in Google Cloud.
-
-AI suggestions are generated as candidates for verification. They do not claim that a company has
-a currently open role. The separate **Sync live jobs** action reads verified public job-board APIs.
+All sends are audited in PostgreSQL. The app reserves a send slot before calling ConnectSafely and
+will not exceed 100 sends in the configured local day.
 
 ## Connect a company job board
 
-Add the company to the watchlist, open **Connect ATS job board** on its card, and choose the
-provider. The board slug is the company identifier in the public careers URL:
+Open **Connect ATS job board** on a company card and choose the provider. The slug is the identifier
+in the public careers URL:
 
 - Greenhouse: `boards.greenhouse.io/{slug}`
 - Lever: `jobs.lever.co/{slug}`
 - Ashby: `jobs.ashbyhq.com/{slug}`
 
-Saving a source does not invent jobs or call AI. **Sync live jobs** reads the public board, retains
-roles matching the configured profile, and skips roles already seen on an earlier run.
+The filters cover Product Management, Chief of Staff, Founder's Office, Strategy, and Growth roles
+in Bangalore/Bengaluru, Gurgaon/Gurugram, Mumbai, Remote, or India.
 
-The current filters include Product Management, Chief of Staff, Founder's Office, Strategy, and
-Growth roles in Bangalore/Bengaluru, Gurgaon/Gurugram, Mumbai, Remote, or India.
+## ATS certificate errors
+
+The backend image installs public root certificates. On a company network that performs TLS
+inspection, export the approved company root certificate to
+`backend/certs/company-root-ca.pem`, set:
+
+```dotenv
+ATS_CA_BUNDLE=/app/certs/company-root-ca.pem
+OUTBOUND_CA_BUNDLE=/app/certs/company-root-ca.pem
+```
+
+`ATS_CA_BUNDLE` covers job-board sync. `OUTBOUND_CA_BUNDLE` covers ConnectSafely. If only
+`ATS_CA_BUNDLE` is present, ConnectSafely reuses it for backward compatibility.
+
+If the company network requires an explicit proxy, also set `HTTPS_PROXY` in `.env`. Then rebuild.
+Do not disable TLS verification.
 
 ## API overview
 
 | Method | Path | Purpose |
 |---|---|---|
-| `GET` | `/api/companies` | List companies |
-| `POST` | `/api/companies` | Add a target company |
+| `GET/POST` | `/api/companies` | List or add target companies |
 | `PATCH` | `/api/companies/{id}` | Change priority/watchlist state |
-| `DELETE` | `/api/companies/{id}` | Remove from watchlist |
-| `GET` | `/api/jobs` | List stored jobs |
-| `POST` | `/api/jobs` | Store a job |
-| `POST` | `/api/discovery/suggest` | Generate scored AI suggestions |
-| `PUT` | `/api/companies/{id}/ats-source` | Connect or update a public ATS board |
-| `DELETE` | `/api/companies/{id}/ats-source` | Disable an ATS board |
-| `POST` | `/api/discovery/sync` | Import matching live jobs |
-| `GET` | `/api/discovery/runs` | Read discovery run history |
+| `POST` | `/api/discovery/suggest` | Generate scored AI company suggestions |
+| `POST` | `/api/discovery/sync` | Import matching live ATS jobs |
+| `POST` | `/api/recruiters/discover` | Find people with ConnectSafely |
+| `GET/POST` | `/api/recruiters` | List or manually add people |
+| `POST` | `/api/recruiters/{id}/shortlist` | Shortlist a person for a job |
+| `GET` | `/api/integrations/status` | Check AI-provider and LinkedIn readiness |
+| `PUT` | `/api/outreach/profile` | Save Rahul's resume profile |
+| `POST` | `/api/outreach/messages` | Generate a personalized DM |
+| `PATCH` | `/api/outreach/messages/{id}` | Edit a draft |
+| `POST` | `/api/outreach/messages/{id}/approve` | Approve without sending |
+| `POST` | `/api/outreach/messages/{id}/send` | Send an approved DM |
+| `GET` | `/api/outreach/capabilities` | Read provider health and daily usage |
 | `GET` | `/api/dashboard/stats` | Read dashboard totals |
 
 ## Tests
-
-With Docker:
 
 ```bash
 docker compose run --rm backend pytest
 ```
 
-For a lightweight local check without installing the runtime stack:
+Frontend checks:
 
 ```bash
-cd backend
-python -m unittest discover -s tests
-python -m compileall app tests
+cd frontend
+npm run lint
+npm run build
 ```
-
-## Architecture
-
-```text
-agentic-job-search/
-├── backend/
-│   ├── app/
-│   │   ├── api/
-│   │   ├── core/
-│   │   └── services/
-│   └── tests/
-├── frontend/
-│   ├── app/
-│   ├── components/
-│   └── lib/
-└── docker-compose.yml
-```
-
-## Product objective and progress
-
-The objective is a daily job-search operating system: discover verified roles, rank companies and
-jobs against Rahul's profile, identify the right recruiter or hiring manager, draft unique
-outreach, and track the funnel while keeping LinkedIn sending behind manual approval.
-
-Completed: local product foundation, PostgreSQL schema, watchlist, initial company scoring,
-AI company suggestions, dashboard, and public ATS job ingestion.
-
-Next:
-
-1. Resume ingestion and job-level match scoring based on Rahul's updated experience.
-2. Recruiter and hiring-manager research with reply-probability scoring.
-3. Approval-first personalized outreach queue.
-4. Reply, referral, and interview tracking.

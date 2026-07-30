@@ -1,7 +1,14 @@
 from datetime import datetime
 from enum import StrEnum
 
-from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    HttpUrl,
+    field_validator,
+    model_validator,
+)
 
 
 class PriorityValue(StrEnum):
@@ -135,6 +142,8 @@ class SuggestionBatch(BaseModel):
 
 class DiscoveryRequest(BaseModel):
     count: int = Field(default=5, ge=1, le=10)
+    auto_shortlist: bool = False
+    minimum_score: int = Field(default=35, ge=0, le=50)
 
 
 class DiscoverySourceRunRead(BaseModel):
@@ -175,3 +184,160 @@ class DashboardStats(BaseModel):
     replies: int = 0
     referrals: int = 0
     interviews: int = 0
+
+
+class RecruiterCreate(BaseModel):
+    company_id: int
+    name: str = Field(min_length=2, max_length=160)
+    email: str | None = Field(default=None, max_length=320)
+    linkedin_url: HttpUrl | None = None
+    designation: str | None = Field(default=None, max_length=240)
+    activity: str | None = Field(default=None, max_length=1000)
+    mutuals: int = Field(default=0, ge=0, le=10000)
+
+    @field_validator("linkedin_url")
+    @classmethod
+    def require_linkedin_url(cls, value: HttpUrl | None) -> HttpUrl | None:
+        if value is None:
+            return value
+        host = (value.host or "").casefold()
+        if host != "linkedin.com" and not host.endswith(".linkedin.com"):
+            raise ValueError("Use a linkedin.com profile URL")
+        return value
+
+    @field_validator("email")
+    @classmethod
+    def validate_email(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip().casefold()
+        if "@" not in normalized or normalized.startswith("@") or normalized.endswith("@"):
+            raise ValueError("Use a valid email address")
+        return normalized
+
+    @model_validator(mode="after")
+    def require_contact_route(self) -> "RecruiterCreate":
+        if not self.email and not self.linkedin_url:
+            raise ValueError("Add a work email or LinkedIn profile URL")
+        return self
+
+
+class RecruiterRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    company_id: int
+    name: str
+    email: str | None
+    email_status: str | None
+    linkedin_url: str | None
+    source: str
+    external_id: str | None
+    designation: str | None
+    activity: str | None
+    mutuals: int
+    reply_probability: int | None
+    is_shortlisted: bool
+    shortlisted_job_id: int | None
+    created_at: datetime
+
+
+class ShortlistRequest(BaseModel):
+    job_id: int | None = None
+    note: str | None = Field(default=None, max_length=1000)
+
+
+class ContactDiscoveryRequest(BaseModel):
+    company_id: int
+    job_id: int | None = None
+    limit: int = Field(default=5, ge=1, le=10)
+
+
+class ContactDiscoveryResult(BaseModel):
+    company_id: int
+    discovered: int
+    stored: int
+    skipped_duplicates: int
+    people: list[RecruiterRead]
+    used_saved_people: bool = False
+    warning: str | None = None
+
+
+class CandidateProfileUpdate(BaseModel):
+    name: str = Field(default="Rahul Ranjan", min_length=2, max_length=160)
+    resume_text: str = Field(min_length=100, max_length=50000)
+    positioning: str | None = Field(default=None, max_length=5000)
+
+
+class CandidateProfileRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    name: str
+    resume_text: str
+    positioning: str | None
+    updated_at: datetime
+
+
+class OutreachGenerateRequest(BaseModel):
+    recruiter_id: int
+    extra_context: str | None = Field(default=None, max_length=5000)
+
+
+class OutreachUpdate(BaseModel):
+    subject: str | None = Field(default=None, max_length=240)
+    body: str = Field(min_length=20, max_length=2000)
+
+
+class OutreachRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    recruiter_id: int
+    job_id: int | None
+    subject: str | None
+    recipient_email: str | None
+    body: str
+    rationale: str | None
+    status: str
+    delivery_mode: str
+    delivery_error: str | None
+    provider_message_id: str | None
+    provider_thread_id: str | None
+    generated_at: datetime
+    approved_at: datetime | None
+    sent_at: datetime | None
+    replied_at: datetime | None
+    recruiter: RecruiterRead
+    job: JobRead | None
+
+
+class DeliveryCapabilities(BaseModel):
+    automatic_linkedin_send: bool
+    mode: str
+    connectsafely_configured: bool
+    account_connected: bool
+    account_name: str | None
+    daily_limit: int
+    sent_today: int
+    reason: str | None
+
+
+class OutreachAction(BaseModel):
+    message: OutreachRead
+    linkedin_url: str
+    automatic_send_available: bool
+
+
+class IntegrationStatus(BaseModel):
+    ai_provider: str
+    ai_configured: bool
+    gemini_configured: bool
+    openai_configured: bool
+    connectsafely_configured: bool
+    connectsafely_account_connected: bool
+    connectsafely_account_name: str | None
+    connectsafely_error: str | None
+    ready_for_contact_discovery: bool
+    ready_for_linkedin_sending: bool
+    missing: list[str]
